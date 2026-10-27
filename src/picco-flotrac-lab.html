@@ -1,0 +1,790 @@
+<title>PiCCO & FloTrac Lab</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: bedside-monitor bench. Live arterial strip on top, the two devices side by side, controls below, then trend + teaching. Deliberately single dark theme (monitor). */
+:root{
+  color-scheme: dark;
+  --bg:#09111a; --panel:#0e1925; --panel2:#122031; --line:#1c2d40; --grid:#152638;
+  --fg:#e3eaf2; --muted:#8495a9; --dim:#5b6c80;
+  --art:#ff5f5f; --picco:#36cfc2; --flo:#f1b64a; --true:#b7c2ff;
+  --ok:#4dc48c; --warn:#f3a33f; --crit:#ff4d6d;
+  --f-num:"Barlow Condensed","Roboto Condensed","Arial Narrow",sans-serif;
+  --f-ui:"IBM Plex Sans","Segoe UI",Roboto,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+  --r:10px;
+}
+*{box-sizing:border-box}
+html,body{background:var(--bg);color:var(--fg)}
+body{font-family:var(--f-ui);font-size:14px;line-height:1.45;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:18px 40px}
+.wrap{max-width:1380px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+h1,h2,h3{margin:0;text-wrap:balance}
+button{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--picco);outline-offset:2px}
+
+/* masthead */
+.mast{display:flex;flex-direction:column;gap:12px}
+.mast-row{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px}
+.brand{margin:0;font-family:var(--f-mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+h1{font-family:var(--f-num);font-weight:600;font-size:clamp(30px,4.2vw,44px);letter-spacing:.01em;line-height:1}
+h1 .p{color:var(--picco)} h1 .f{color:var(--flo)}
+.tools{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.btn{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:7px 12px;cursor:pointer;font-size:13px;white-space:nowrap}
+.btn:hover{border-color:#2d4560}
+.btn[aria-pressed="true"]{background:#173a3a;border-color:var(--picco);color:#dffcf8}
+.btn.primary{background:var(--picco);border-color:var(--picco);color:#04201d;font-weight:600}
+.btn.primary:disabled{opacity:.5;cursor:default}
+.tog{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);cursor:pointer;padding:6px 8px;border-radius:8px;border:1px solid var(--line)}
+.tog input{accent-color:var(--picco)}
+.scen{display:flex;flex-wrap:wrap;gap:6px}
+.scen button{background:transparent;border:1px solid var(--line);border-radius:999px;padding:6px 13px;cursor:pointer;font-size:13px;color:var(--muted)}
+.scen button[aria-pressed="true"]{color:var(--fg);border-color:var(--fg);background:var(--panel2)}
+.case{display:grid;grid-template-columns:1fr;gap:4px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px}
+.case p{margin:0;max-width:110ch}
+.case .task{color:var(--muted)}
+.quiz{border-top:1px dashed var(--line);margin-top:8px;padding-top:10px;display:flex;flex-direction:column;gap:8px}
+.qlab{font-family:var(--f-mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.quiz select{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:7px 9px;color:var(--fg);font:inherit;min-width:0}
+.verdict{border-radius:8px;padding:10px 12px;font-size:13px}
+.verdict.right{background:#0b2a1c;border:1px solid #1f7a52}.verdict.wrong{background:#2c0d14;border:1px solid #7c2c37}
+.verdict ul{margin:6px 0 0;padding-left:18px} .case .task b{color:var(--flo);font-weight:600}
+
+/* panels */
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:14px;min-width:0}
+.ph{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:6px 12px;margin-bottom:10px}
+.ph h2{font-family:var(--f-num);font-weight:600;font-size:24px;letter-spacing:.02em}
+.ph .sub{font-size:12px;color:var(--muted)}
+.picco .ph h2{color:var(--picco)} .flo .ph h2{color:var(--flo)}
+h3{font-size:12px;font-family:var(--f-mono);font-weight:500;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+canvas{display:block;width:100%;max-width:100%}
+
+/* arterial strip */
+.art-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 22px;margin-bottom:6px}
+.rd{display:flex;align-items:baseline;gap:6px}
+.rd .k{font-family:var(--f-mono);font-size:11px;letter-spacing:.08em;color:var(--muted)}
+.rd .n{font-family:var(--f-num);font-size:30px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1}
+.rd.art .n,.rd.art .k{color:var(--art)}
+.badges{display:flex;flex-wrap:wrap;gap:6px;margin-left:auto}
+.pill{font-family:var(--f-mono);font-size:11px;padding:3px 8px;border-radius:999px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+.pill.warn{border-color:var(--warn);color:var(--warn)} .pill.crit{border-color:var(--crit);color:var(--crit)} .pill.ok{border-color:#245c45;color:var(--ok)}
+#artc{height:190px}
+.art-foot{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px;margin-top:8px;font-size:12px;color:var(--muted)}
+
+/* devices */
+.devs{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:14px;align-items:start}
+.col{display:flex;flex-direction:column;gap:14px;min-width:0}
+.devs.single{grid-template-columns:1fr}
+.devs.single .col{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);align-items:start}
+@media (max-width:1020px){.devs{grid-template-columns:1fr}.devs.single .col{grid-template-columns:1fr}}
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:8px}
+.tile{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.tile.big{grid-column:span 2}
+.t-lab{font-family:var(--f-mono);font-size:11px;letter-spacing:.06em;color:var(--muted);display:flex;justify-content:space-between;gap:4px}
+.t-val{display:flex;align-items:baseline;gap:5px;flex-wrap:wrap}
+.t-val .v{font-family:var(--f-num);font-weight:600;font-size:30px;line-height:1.05;font-variant-numeric:tabular-nums}
+.tile.big .t-val .v{font-size:44px}
+.t-val .u{font-size:11px;color:var(--muted)}
+.t-rng{font-family:var(--f-mono);font-size:10.5px;color:var(--dim)}
+.picco .tile .v{color:var(--picco)} .flo .tile .v{color:var(--flo)}
+.tile[data-s="low"] .v,.tile[data-s="high"] .v{color:var(--warn)}
+.tile[data-s="low"]{border-color:#5a4220} .tile[data-s="high"]{border-color:#5a4220}
+.tile[data-s="invalid"] .v{color:var(--dim);text-decoration:line-through;text-decoration-thickness:2px}
+.flag{font-size:10px;color:var(--warn);letter-spacing:.04em;font-weight:600}
+.tile[data-s="invalid"] .flag{color:var(--crit)}
+.tdmsg{margin:0;font-size:12.5px;color:var(--warn);border:1px solid #5a4220;border-radius:8px;padding:7px 10px}
+.calbar{font-size:12px;color:var(--muted);display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+
+.td{margin-top:14px;border-top:1px solid var(--line);padding-top:12px;display:flex;flex-direction:column;gap:10px}
+.td-ctl{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+#tdc{height:200px}
+.tbl-wrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;font-size:12.5px}
+th,td{text-align:right;padding:5px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+th{font-family:var(--f-mono);font-weight:500;font-size:11px;color:var(--muted)}
+td.bad{color:var(--warn)}
+tfoot td{color:var(--picco);font-weight:600}
+
+.rel{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
+.rel li{display:grid;grid-template-columns:auto 1fr;gap:8px;align-items:start;font-size:13px}
+.dot{width:8px;height:8px;border-radius:50%;margin-top:6px;background:var(--ok)}
+.dot.warn{background:var(--warn)} .dot.crit{background:var(--crit)}
+
+/* controls */
+.ctrls{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:16px}
+.grp{display:flex;flex-direction:column;gap:9px;min-width:0}
+.row{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;flex-wrap:wrap}
+.seg button{background:transparent;border:0;padding:6px 11px;cursor:pointer;font-size:13px;color:var(--muted)}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button[aria-pressed="true"]{background:var(--panel2);color:var(--fg)}
+.sl{display:grid;grid-template-columns:1fr auto;gap:2px 10px;align-items:center}
+.sl label{font-size:13px}
+.sl output{font-family:var(--f-mono);font-size:12px;color:var(--flo);text-align:right}
+.sl input{grid-column:1/-1;width:100%;accent-color:var(--flo)}
+.note{font-size:12px;color:var(--muted);margin:0}
+
+/* lower */
+.lower{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:14px;align-items:start}
+@media (max-width:1020px){.lower{grid-template-columns:1fr}}
+#trc{height:220px}
+.legend{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:var(--muted);margin-top:8px}
+.legend i{display:inline-block;width:16px;height:3px;border-radius:2px;margin-right:5px;vertical-align:middle}
+.interp{display:flex;flex-direction:column;gap:12px}
+#interp{display:flex;flex-direction:column;gap:14px}
+.prof{display:grid;grid-template-columns:max-content 1fr;gap:5px 12px;font-size:13px;margin:0}
+.prof dt{font-family:var(--f-mono);font-size:11px;color:var(--muted);padding-top:2px}
+.prof dd{margin:0}
+.acts{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:5px}
+.acts li::marker{color:var(--picco)}
+.log{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px;font-size:13px}
+.log .res{font-weight:600} .log .yes{color:var(--ok)} .log .no{color:var(--warn)}
+.empty{color:var(--dim);font-size:13px;margin:0}
+.truth-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:6px 14px;font-size:13px;margin-bottom:10px}
+.truth-grid div{display:flex;justify-content:space-between;gap:8px;border-bottom:1px dashed var(--line);padding:3px 0}
+.truth-grid span:last-child{font-variant-numeric:tabular-nums;color:var(--true)}
+#stc{height:210px}
+.foot{font-size:12px;color:var(--dim);max-width:120ch}
+@media (max-width:560px){ .tile.big .t-val .v{font-size:36px} .rd .n{font-size:24px} #artc{height:160px} }
+@media (prefers-reduced-motion:reduce){ *{scroll-behavior:auto} }
+</style>
+
+<div class="wrap">
+  <header class="mast">
+    <div class="mast-row">
+      <div>
+        <p class="brand">ICU O.Dakka · Haemodynamic lab</p>
+        <h1><span class="p">PiCCO</span> &amp; <span class="f">FloTrac</span> Lab</h1>
+      </div>
+      <div class="tools">
+        <div class="seg" id="qSeg"><button type="button" data-q="0" aria-pressed="true">Free practice</button><button type="button" data-q="1" aria-pressed="false">Unknown patient</button></div>
+        <button class="btn" id="pause" type="button">Pause</button>
+        <label class="tog"><input type="checkbox" id="showInterp" checked> Interpretation</label>
+        <label class="tog"><input type="checkbox" id="showTruth"> True physiology</label>
+      </div>
+    </div>
+    <nav class="scen" id="scen" aria-label="Scenarios"></nav>
+    <div class="case"><p id="vignette"></p><p class="task" id="task"></p>
+      <div class="quiz" id="quizBox" hidden>
+        <div class="row"><label for="dxSel" class="qlab">Your diagnosis</label><select id="dxSel"></select>
+        <button class="btn primary" type="button" id="dxSubmit">Submit</button><button class="btn" type="button" id="newCase">New case</button></div>
+        <div id="verdict"></div>
+      </div></div>
+  </header>
+
+  <section class="panel" aria-label="Arterial pressure">
+    <div class="art-head">
+      <div class="rd art"><span class="k">ART</span><span class="n" id="a_sd">—</span><span class="n" id="a_map" style="font-size:22px">(—)</span></div>
+      <div class="rd"><span class="k">HR</span><span class="n" id="a_hr">—</span></div>
+      <div class="rd"><span class="k">CVP</span><span class="n" id="a_cvp">—</span></div>
+      <div class="rd"><span class="k">ScvO₂</span><span class="n" id="a_scv">—</span></div>
+      <div class="rd"><span class="k">LACT</span><span class="n" id="a_lac">—</span></div>
+      <div class="badges" id="badges"></div>
+    </div>
+    <canvas id="artc" aria-label="Live arterial waveform"></canvas>
+    <div class="art-foot">
+      <span id="artNote">Both devices analyse this arterial trace. 0–200 mmHg, 6-second sweep.</span>
+      <button class="btn" id="flush" type="button">Fast-flush test</button>
+    </div>
+  </section>
+
+  <div class="devs" id="devs">
+    <section class="panel picco" id="pPanel">
+      <div class="ph"><h2>PiCCO</h2><span class="sub">Calibrated pulse contour + transpulmonary thermodilution (femoral)</span></div>
+      <div class="calbar" id="calbar"></div>
+      <h3 style="margin:10px 0 8px">Continuous · pulse contour, 12-s average</h3>
+      <div class="tiles" id="p_tiles"></div>
+      <div class="td">
+        <div class="ph" style="margin:0"><h3>Transpulmonary thermodilution</h3>
+          <div class="td-ctl">
+            <div class="seg" data-td="temp"><button type="button" data-v="cold">Cold 6 °C</button><button type="button" data-v="room">Room 22 °C</button></div>
+            <div class="seg" data-td="vol"><button type="button" data-v="15">15 mL</button><button type="button" data-v="20">20 mL</button></div>
+            <div class="seg" data-td="site"><button type="button" data-v="jug">Jugular CVC</button><button type="button" data-v="femc">Femoral CVC (entered)</button><button type="button" data-v="fem">Femoral CVC (not entered)</button></div>
+            <button class="btn primary" id="inject" type="button">Inject bolus</button>
+            <button class="btn" id="newSeries" type="button">New series</button>
+          </div>
+        </div>
+        <p class="tdmsg" id="tdMsg" hidden></p>
+        <canvas id="tdc" aria-label="Thermodilution curves"></canvas>
+        <div class="tbl-wrap"><table id="tdtable"></table></div>
+        <div class="tiles" id="t_tiles"></div>
+      </div>
+    </section>
+
+    <div class="col">
+      <section class="panel flo" id="fPanel">
+        <div class="ph"><h2>FloTrac</h2><span class="sub">Uncalibrated pulse contour (radial), 20-s rolling average</span></div>
+        <div class="tiles" id="f_tiles"></div>
+        <ul class="rel" id="f_rel"></ul>
+      </section>
+      <section class="panel">
+        <div class="ph"><h2 style="font-size:20px">Responsiveness tests</h2><span class="sub">ΔCI read 25 s after each fluid bolus or PLR</span></div>
+        <ol class="log" id="log"></ol>
+        <p class="empty" id="logEmpty">No tests yet. Give a bolus or start a passive leg raise.</p>
+      </section>
+    </div>
+  </div>
+
+  <section class="panel ctrls" aria-label="Interventions and settings">
+    <div class="grp">
+      <h3>Fluids and position</h3>
+      <div class="row">
+        <button class="btn" type="button" data-fluid="250">+250 mL</button>
+        <button class="btn" type="button" data-fluid="500">+500 mL</button>
+        <button class="btn" type="button" data-fluid="-500">Remove 500 mL</button>
+      </div>
+      <div class="row"><button class="btn" type="button" id="plr" aria-pressed="false">Passive leg raise</button><button class="btn" type="button" id="eeo" aria-pressed="false">End-expiratory occlusion 15 s</button></div>
+      <p class="note">Effects are time-compressed to seconds.</p>
+    </div>
+    <div class="grp">
+      <h3>Drugs</h3>
+      <div class="sl"><label for="norad">Norepinephrine</label><output id="noradO">0.00 µg/kg/min</output><input type="range" id="norad" min="0" max="1" step="0.02" value="0"></div>
+      <div class="sl"><label for="dobu">Dobutamine</label><output id="dobuO">0 µg/kg/min</output><input type="range" id="dobu" min="0" max="20" step="1" value="0"></div>
+    </div>
+    <div class="grp">
+      <h3>Ventilation</h3>
+      <div class="seg" data-key="vent"><button type="button" data-v="cmv">Controlled</button><button type="button" data-v="spont">Spontaneous efforts</button></div>
+      <div class="sl"><label for="tv">Tidal volume</label><output id="tvO">8 mL/kg PBW</output><input type="range" id="tv" min="4" max="10" step="1" value="8"></div>
+      <div class="sl"><label for="peep">PEEP</label><output id="peepO">5 cmH₂O</output><input type="range" id="peep" min="0" max="20" step="1" value="5"></div>
+      <div class="seg" data-key="chest"><button type="button" data-v="closed">Chest closed</button><button type="button" data-v="open">Open chest</button></div>
+    </div>
+    <div class="grp">
+      <h3>Rhythm and arterial line</h3>
+      <div class="seg" data-key="rhythm"><button type="button" data-v="sinus">Sinus</button><button type="button" data-v="af">Atrial fibrillation</button></div>
+      <div class="seg" data-key="line"><button type="button" data-v="ok">Optimal</button><button type="button" data-v="over">Overdamped</button><button type="button" data-v="under">Underdamped</button></div>
+      <p class="note">Damping is a real 2nd-order transducer model. Run a fast-flush test to see it.</p>
+    </div>
+  </section>
+
+  <div class="lower">
+    <section class="panel">
+      <div class="ph"><h2 style="font-size:20px">Cardiac index trend</h2><span class="sub">Last 5 minutes</span></div>
+      <canvas id="trc" aria-label="Cardiac index trend"></canvas>
+      <div class="legend"><span id="lgP"><i style="background:var(--picco)"></i>PiCCO PCCI</span><span id="lgF"><i style="background:var(--flo)"></i>FloTrac CI</span><span id="lgTrue" hidden><i style="background:var(--true)"></i>True CI</span><span><i style="background:var(--dim)"></i>Events</span></div>
+    </section>
+    <div class="col">
+      <section class="panel interp" id="interpPanel">
+        <div class="ph" style="margin:0"><h2 style="font-size:20px">Interpretation</h2><span class="sub" id="interpSub">PiCCO decision tree + validity checks</span></div>
+        <div id="interp"></div>
+      </section>
+      <section class="panel" id="truthPanel" hidden>
+        <div class="ph"><h2 style="font-size:20px;color:var(--true)">True physiology</h2><span class="sub">What the patient is really doing</span></div>
+        <div class="truth-grid" id="truth"></div>
+        <canvas id="stc" aria-label="Frank-Starling position"></canvas>
+      </section>
+    </div>
+  </div>
+
+  <p class="foot">Teaching model, not a medical device. Not affiliated with or endorsed by Getinge or Edwards Lifesciences; values are illustrative. PiCCO ranges per Pulsion/Getinge, FloTrac ranges per Edwards. Model: Frank-Starling preload curve driven by GEDVI, pressure-dependent arterial compliance, respiratory preload swing proportional to tidal volume, Stewart-Hamilton transpulmonary thermodilution (MTt, DSt → GEDV, ITBV, EVLW), and a 2nd-order catheter-transducer system.</p>
+</div>
+
+<script>
+(()=>{
+const $=id=>document.getElementById(id);
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const avg=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:NaN;
+const fmt=(v,d=0)=>(v==null||!isFinite(v))?'—':v.toFixed(d);
+function randn(){let u=0,v=0;while(!u)u=Math.random();while(!v)v=Math.random();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);}
+const CSS=getComputedStyle(document.documentElement);
+const col=n=>CSS.getPropertyValue(n).trim();
+const C={art:col('--art'),picco:col('--picco'),flo:col('--flo'),tru:col('--true'),grid:col('--grid'),line:col('--line'),muted:col('--muted'),dim:col('--dim'),fg:col('--fg'),warn:col('--warn'),bg:col('--bg'),panel:col('--panel')};
+
+const BSA=1.9, PBW=70, FS=250, DT=1/FS, RESP=3.75, ALPHA=1-Math.exp(-DT/4);
+const sviFn=(G,c)=>58*c*(1-Math.exp(-Math.max(0,G-250)/280));
+const comp=m=>1.6*Math.exp(-0.012*(m-85));
+
+const BASE={vol:720,contr:1,svri:1900,hr:78,evlwi:6,rhythm:'sinus',vent:'cmv',tv:8,chest:'closed',line:'ok',norad:0,dobu:0,plr:false,eeo:false,hb:12,sao2:.98,vo2i:130,ei:0,lac0:1,peep:5};
+const SCEN={
+  base:{name:'Post-op baseline',key:["CI, GEDVI, EVLWI and ScvO₂ normal", "SVV low on 8 mL/kg: not fluid responsive", "No intervention needed"],p:{},
+    v:'62-year-old man after elective colectomy. Sedated, volume-controlled ventilation at 8 mL/kg, sinus rhythm. Haemodynamically stable.',
+    t:'Read the thermodilution series and check the spread between boluses. Switch the line to overdamped and watch PCCI fall until you recalibrate.',
+    ft:'Read CI, SV and SVV. Switch the line to overdamped and watch SV fall, then run a fast-flush test.'},
+  haem:{name:'Haemorrhage',key:["Low CI with low GEDVI: preload deficit", "High SVV/PPV on controlled ventilation", "Low ScvO₂; volume (blood) raises CI"],p:{vol:400,contr:1.05,svri:2050,hr:112,evlwi:5,hb:8,lac0:1.6},
+    v:'45-year-old man, 2 h after trauma laparotomy for splenic injury. Drain output rising. Sedated and ventilated at 8 mL/kg.',
+    t:'Note the high SVV and low GEDVI. Give 500 mL twice and follow CI, SVV and the Starling position.',
+    ft:'SVV is high on controlled ventilation at 8 mL/kg. Give 500 mL twice and watch SVV fall as CI rises.'},
+  sepsis:{name:'Septic shock + ARDS',key:["High CI, low SVRI, MAP < 65: vasoplegia", "EVLWI high with PVPI > 3: permeability oedema", "High ScvO₂ with raised lactate: extraction defect", "Norepinephrine first; prove responsiveness (PLR) before fluid"],p:{vol:590,contr:.85,svri:950,hr:118,evlwi:17,tv:6,hb:10,sao2:.94,vo2i:150,ei:.35,lac0:3.2,peep:12},
+    v:'58-year-old woman with faecal peritonitis and ARDS. Lung-protective ventilation at 6 mL/kg. Warm peripheries, MAP in the 50s.',
+    t:'SVV is falsely low at 6 mL/kg: run a PLR. EVLWI and PVPI show permeability oedema. Start norepinephrine, then check whether PiCCO asks for recalibration.',
+    ft:'Low SVR: FloTrac under-reads CO here (reveal true physiology). SVV is unreliable at 6 mL/kg, so run a PLR. Then start norepinephrine.'},
+  cardio:{name:'Cardiogenic shock',key:["Low CI, high GEDVI, low GEF/CFI: pump failure", "EVLWI high with PVPI < 3: hydrostatic oedema", "Low ScvO₂ and raised lactate: inotrope, not fluid"],p:{vol:980,contr:.3,svri:2400,hr:100,evlwi:13,hb:12,sao2:.93,vo2i:120,peep:8},
+    v:'71-year-old man with anterior STEMI after PCI. Cool peripheries, rising lactate, crackles to the mid-zones.',
+    t:'GEDVI is high and GEF low: fluid will not help. Add dobutamine, then remove 500 mL and watch EVLWI.',
+    ft:'Low CI with low SVV and high SVR: fluid will not help. Add dobutamine and watch CI and SVR.'},
+  overload:{name:'Fluid overload',key:["High GEDVI and EVLWI with PVPI < 3", "Adequate CI: de-resuscitate when stable", "FloTrac alone cannot see the lung water"],p:{vol:1050,contr:.9,svri:1400,hr:88,evlwi:16,hb:9,sao2:.91,lac0:1.2,peep:10},
+    v:'66-year-old woman on day 4 of septic shock, +9 L balance, worsening oxygenation on the ventilator.',
+    t:'EVLWI is high with PVPI below 3 (hydrostatic). Compare with the septic ARDS case, where PVPI is above 3.',
+    ft:'FloTrac cannot see lung water: CI and SVV look acceptable while EVLWI is 16. Reveal true physiology to see what you are missing.'},
+  traps:{name:'Validity traps',key:["AF and spontaneous efforts: SVV/PPV invalid", "PLR shows fluid responsiveness despite uninterpretable SVV", "Raised EVLWI with PVPI around 3"],p:{vol:560,contr:.9,svri:1500,hr:120,evlwi:12,rhythm:'af',vent:'spont',tv:6,hb:11,sao2:.93,vo2i:140,lac0:1.5,peep:10},
+    v:'52-year-old man with pneumonia-ARDS, new atrial fibrillation, light sedation with triggered breaths.',
+    t:'SVV and PPV are meaningless here. Use a PLR with real-time pulse contour CI to decide on fluid.',
+    ft:'AF and spontaneous breaths make SVV meaningless. Run a PLR and read the change in FloTrac CI.'}
+};
+
+let s, eff, simT=0, beat=null, prevRR=.8, breath={start:0,dur:3.5,amp:1};
+let beats=[], fy=80, fv=0, lastY=80, flushUntil=-10, flushMark=-10;
+const artBuf=new Float32Array(FS*6).fill(NaN); let artW=0;
+let picco={}, flo={}, td={temp:'cold',vol:15,site:'jug',series:[],curves:[],anim:null,mean:null,lastT:-1}, cal=null, lac=1, eeoUntil=-1;
+let trend=[], events=[], pending=[], logRows=[], running=true, scenKey='sepsis', lastEventT=-1, mode='both', quiz=null;
+
+function targets(){
+  const baro=(eff&&s.map0)?clamp(.35*(s.map0-derived(eff).MAP),-12,25):0;   // baroreflex: HR follows MAP
+  return {G:s.vol+160*Math.min(s.norad,.6)+(s.plr?110:0)+(s.eeo&&s.vent==='cmv'?30:0)-(s.vent==='cmv'?4*(s.peep-5):0),
+    c:s.contr*(1+.045*s.dobu)*(1+.15*Math.min(s.norad,.5)),
+    hr:s.hr+1.4*s.dobu+baro,
+    svri:s.svri*(1+1.6*s.norad)*(1-.012*s.dobu),
+    evlwi:s.evlwi};
+}
+function derived(e){
+  const SVI=sviFn(e.G,e.c), CI=SVI*e.hr/1000;
+  const CVP=clamp(1+(e.G-450)/45+7*Math.max(0,1-e.c)+(s&&s.vent==='cmv'?.3*(s.peep-5):0),1,28);
+  return {SVI,CI,CVP,MAP:CI*e.svri/80+CVP};
+}
+function radGrad(){return clamp((1500-s.svri)/800,0,1)*(3+14*Math.min(s.norad,.6));}   // femoral-radial MAP gradient
+function oxy(){
+  const d=derived(eff), do2i=d.CI*1.34*s.hb*s.sao2*10, er=clamp(s.vo2i/do2i*(1-s.ei),.1,.75), svo2=s.sao2*(1-er)*100;
+  const shock=d.MAP<65||d.CI<2.5;
+  return {do2i,svo2,scv:clamp(svo2+(shock?6:-2),20,95),lacT:s.lac0+Math.max(0,330-do2i)/40+Math.max(0,65-d.MAP)/8};
+}
+function respSwing(t){
+  if(s.eeo&&s.vent==='cmv')return 0;
+  if(s.vent==='cmv'){const dG=9*s.tv*(s.chest==='open'?.3:1);return dG/2*Math.sin(2*Math.PI*t/RESP);}
+  if(t>breath.start+breath.dur) breath={start:t,dur:2.3+Math.random()*2.8,amp:.25+Math.random()*1.3};
+  return -breath.amp*24*Math.sin(2*Math.PI*(t-breath.start)/breath.dur);
+}
+function makeBeat(){
+  const d=derived(eff), HR=eff.hr, RRm=60/HR;
+  const RR=s.rhythm==='af'?RRm*clamp(1+.27*randn(),.55,1.6):RRm*(1+.012*randn());
+  const ff=s.rhythm==='af'?clamp(.62+.38*(prevRR/RRm),.5,1.35):1; prevRR=RR;
+  const sw=respSwing(simT+.3*RR);
+  const SVb=sviFn(eff.G+sw,eff.c)*ff*BSA;
+  const Cm=comp(d.MAP), PPm=d.SVI*BSA/Cm, PPb=SVb/Cm, MAPb=d.MAP+.3*(PPb-PPm);
+  const N=Math.max(20,Math.round(RR*FS)), c=eff.c, sv=eff.svri;
+  let ts=Math.min(clamp(.42-.0017*HR,.2,.36),.62*RR);
+  const tr=Math.min(clamp(.075/Math.pow(c,.35),.05,.14),ts*.6);
+  const n=clamp(.3+(sv-1000)/4500,.12,.55), a2=clamp(.25+(sv-1000)/3000,.05,.6), tau=clamp(.32*Math.pow(sv/1800,.7),.12,.6);
+  const tail=Math.exp(-(RR-ts)/tau), r=new Float32Array(N); let rmax=0,rsum=0;
+  for(let i=0;i<N;i++){const t=i/FS;let v;
+    if(t<tr) v=Math.sin(Math.PI/2*t/tr)**2;
+    else if(t<ts){const x=(t-tr)/(ts-tr);v=n+(1-n)*Math.pow(1-x,1.25)+a2*.35*Math.sin(Math.PI*x);}
+    else{const u=t-ts,D=(Math.exp(-u/tau)-tail)/(1-tail);v=n*D-.12*n*Math.exp(-(((u-.012)/.012)**2))+.16*n*Math.exp(-(((u-.055)/.028)**2));}
+    r[i]=v;if(v>rmax)rmax=v;rsum+=v;}
+  const DBP=MAPb-PPb*(rsum/N)/rmax, p=new Float32Array(N);
+  const prevEnd=beat?beat.p[beat.p.length-1]:DBP, bN=Math.round(.04*FS);
+  for(let i=0;i<N;i++){p[i]=DBP+PPb*r[i]/rmax;if(i<bN)p[i]+=(prevEnd-DBP)*(1-i/bN);}
+  beat={p,i:0,RR,SV:SVb,max:-1e9,min:1e9,sum:0,cnt:0,slope:0,flush:false};
+}
+function finishBeat(b){
+  if(!b.cnt)return;
+  beats.push({t:simT,RR:b.RR,SVt:b.SV,sbp:b.max,dbp:b.min,map:b.sum/b.cnt,ppm:b.max-b.min,dp:b.slope,ok:!b.flush});
+  while(beats.length&&beats[0].t<simT-60)beats.shift();
+}
+const lineP=()=>s.line==='ok'?[24,.65]:s.line==='over'?[7,1.3]:[12,.14];
+function step(){
+  const tg=targets(); for(const k in tg) eff[k]+=(tg[k]-eff[k])*ALPHA;
+  if(!beat||beat.i>=beat.p.length){if(beat)finishBeat(beat);makeBeat();}
+  let u=beat.p[beat.i++];
+  if(simT<flushUntil){u=300;beat.flush=true;} else if(simT<flushUntil+.7) beat.flush=true;
+  const [fn,z]=lineP(), w=2*Math.PI*fn, h=DT/4;
+  for(let k=0;k<4;k++){fv+=h*(w*w*(u-fy)-2*z*w*fv);fy+=h*fv;}
+  const y=fy;
+  if(y>beat.max)beat.max=y; if(y<beat.min)beat.min=y; beat.sum+=y; beat.cnt++;
+  const sl=(y-lastY)*FS; if(sl>beat.slope&&!(simT<flushUntil+.7))beat.slope=sl; lastY=y;
+  artBuf[artW]=y; artW=(artW+1)%artBuf.length;
+  simT+=DT;
+}
+
+/* ---------- devices ---------- */
+const win=sec=>beats.filter(b=>b.ok&&b.t>simT-sec);
+function variation(list,key){
+  if(list.length<4)return null; const t0=list[0].t, span=list[list.length-1].t-t0, segs={};
+  list.forEach(b=>{const k=Math.floor((b.t-t0)/RESP);(segs[k]=segs[k]||[]).push(b[key]);});
+  const v=Object.entries(segs).filter(([k,a])=>(+k+1)*RESP<=span+.01&&a.length>=2)
+    .map(([,a])=>{const mx=Math.max(...a),mn=Math.min(...a);return (mx-mn)/avg(a)*100;});
+  return v.length?avg(v):null;
+}
+function computeFlo(){
+  const L=win(20); if(L.length<5)return;
+  const vb=1-.35*clamp((1400-eff.svri)/700,0,1);
+  L.forEach(b=>b.svf=b.ppm*comp(b.map)*vb);
+  const hr=60/avg(L.map(b=>b.RR)), sv=avg(L.map(b=>b.svf)), co=sv*hr/1000, map=avg(L.map(b=>b.map))-radGrad(), cvp=derived(eff).CVP;
+  flo={co,ci:co/BSA,sv,svi:sv/BSA,svv:variation(L,'svf'),ppv:variation(L,'ppm'),map,cvp,hr,svr:(map-cvp)*80/co,svri:(map-cvp)*80/(co/BSA)};
+}
+function computePicco(){
+  const L=win(12); if(L.length<4)return;
+  const mapA=avg(L.map(b=>b.map)), hr=60/avg(L.map(b=>b.RR)), cvp=derived(eff).CVP;
+  const dp=avg(L.map(b=>b.dp)), ppv=variation(L,'ppm');
+  if(!cal){picco={ci:null,map:mapA,hr,dpmx:dp,ppv,svv:null};return;}
+  L.forEach(b=>b.svp=cal.K*b.ppm*comp(b.map)/comp(mapA));
+  const sv=avg(L.map(b=>b.svp)), ci=sv*hr/1000/BSA;
+  picco={ci,svi:sv/BSA,svv:variation(L,'svp'),ppv,svri:(mapA-cvp)*80/ci,dpmx:dp,map:mapA,hr};
+}
+function calibrate(ciTD){
+  const L=win(10); if(L.length<3)return;
+  const mapA=avg(L.map(b=>b.map)), hr=60/avg(L.map(b=>b.RR));
+  const svTD=ciTD*BSA*1000/hr, k=avg(L.map(b=>b.ppm*comp(b.map)/comp(mapA)));
+  cal={K:svTD/k,t:simT,map:mapA,line:s.line};
+}
+
+/* ---------- thermodilution ---------- */
+function tdMeasure(){
+  const d=derived(eff), cold=td.temp==='cold', k=(cold?1:2.3)*(td.vol===20?.8:1)*(s.rhythm==='af'?1.3:1)*(eff.evlwi>10&&td.vol===15?1.4:1);
+  const siteF=td.site==='fem'?1.17:td.site==='femc'?1.03:1;
+  const ci=d.CI*(1+.03*k*randn()), ged=eff.G*siteF*(1+.035*k*randn()), ev=Math.max(1,eff.evlwi*(1+.05*k*randn()));
+  const GEDV=ged*BSA, PBV=.25*GEDV, EVLW=ev*PBW, PTV=PBV+EVLW, ITTV=GEDV+PTV, co=ci*BSA*1000/60;
+  const MTt=ITTV/co, DSt=PTV/co, Ti=cold?6:22, A=td.vol*(37-Ti)/co, SVI=ci*1000/eff.hr;
+  const a=.8, t0=Math.max(2,MTt-(a+1)*DSt), tEnd=Math.min(t0+5.5*DSt,110), noise=cold?.0025:.009;
+  const pts=[]; let I=0; for(let t=0;t<=tEnd;t+=.1){const x=t-t0, f=x>0?Math.pow(x,a)*Math.exp(-x/DSt):0;pts.push(f);I+=f*.1;}
+  const amp=A/I; let nz=0; const ys=pts.map(f=>{nz=.85*nz+.15*randn()*2.6;return f*amp+noise*nz;});
+  return {ci,gedvi:ged,itbvi:1.25*ged,evlwi:ev,pvpi:EVLW/PBV,gef:4*SVI/ged*100,cfi:ci/ged*1000,cpi:d.MAP*ci/451,
+    MTt,DSt,t0,tEnd,ys,peak:Math.max(...pts)*amp,t:simT,cold,site:td.site};
+}
+function finishInjection(m){
+  td.series.push(m); if(td.series.length>5)td.series.shift();
+  const S=td.series, mk=k=>avg(S.map(x=>x[k]));
+  td.mean={ci:mk('ci'),gedvi:mk('gedvi'),itbvi:mk('itbvi'),evlwi:mk('evlwi'),pvpi:mk('pvpi'),gef:mk('gef'),cfi:mk('cfi'),cpi:mk('cpi'),t:simT};
+  td.lastT=simT; calibrate(td.mean.ci); computePicco();
+  addEvent('TD');
+  renderTDTable(); renderTiles(); drawTD();
+  const notes=[];
+  if(td.mean.evlwi>10&&td.vol===15)notes.push('EVLWI > 10 mL/kg: use 20 mL injectate for a reliable signal (Pulsion advice).');
+  if(m.site==='fem')notes.push('Femoral venous injection not entered in the monitor: GEDVI and ITBVI read ~15–20% high. Enter the site or inject via a jugular/subclavian CVC.');
+  tdNote(notes.join(' '));
+}
+function tdNote(t){$('tdMsg').textContent=t;$('tdMsg').hidden=!t;}
+function inject(instant){
+  if(td.anim)return;
+  if(!instant&&quiz)quiz.did.TD=1;
+  if(!instant){
+    if(!running){tdNote('Simulation paused: resume before injecting.');return;}
+    if(s.plr||s.eeo||pending.length){tdNote('A responsiveness test is running. Injecting now recalibrates the pulse contour mid-test and corrupts the result: wait for the result first.');return;}
+  }
+  const m=tdMeasure();
+  if(instant){finishInjection(m);return;}
+  td.anim={m,start:performance.now()}; $('inject').disabled=true;
+}
+
+/* ---------- events + tests ---------- */
+function curCI(){return {p:picco.ci,f:flo.ci,t:derived(eff).CI};}
+function addEvent(label){events.push({t:simT,label});if(label!=='TD')lastEventT=simT;}
+function startTest(label,after=25,thr=10){if(quiz)quiz.did[label.split(' ')[0]]=1;pending.push({label,t:simT,base:curCI(),after,thr});}
+function checkTests(){
+  for(let i=pending.length-1;i>=0;i--){const e=pending[i];if(simT-e.t<e.after)continue;
+    const now=curCI(), pc=e.base.p&&now.p?(now.p/e.base.p-1)*100:null, fc=(now.f/e.base.f-1)*100, tc=(now.t/e.base.t-1)*100;
+    logRows.unshift({label:e.label,pc,fc,tc,thr:e.thr}); pending.splice(i,1); renderLog();}
+}
+function renderLog(){
+  $('logEmpty').hidden=logRows.length>0;
+  const truth=$('showTruth').checked;
+  $('log').innerHTML=logRows.slice(0,8).map(r=>{
+    const ref=mode==='flotrac'?r.fc:(r.pc!=null?r.pc:r.fc), yes=ref>=r.thr, pct=v=>v==null?'—':(v>=0?'+':'')+v.toFixed(0)+'%';
+    const dev=mode==='picco'?`PiCCO ${pct(r.pc)}`:mode==='flotrac'?`FloTrac ${pct(r.fc)}`:`PiCCO ${pct(r.pc)} · FloTrac ${pct(r.fc)}`;
+    return `<li><b>${r.label}</b>: ${dev}${truth?` · true ${(r.tc>=0?'+':'')+r.tc.toFixed(0)}%`:''} → <span class="res ${yes?'yes':'no'}">${yes?`responsive (ΔCI ≥ ${r.thr}%)`:'not responsive'}</span>${r.label.startsWith('EEO')&&mode!=='picco'?' <span style="color:var(--muted)">· FloTrac 20-s averaging blunts a 15-s test</span>':''}</li>`;}).join('');
+}
+
+/* ---------- tiles ---------- */
+const TD_TILES=[['t_ci','CI (TD)','L/min/m²',3,5,2],['t_gedvi','GEDVI','mL/m²',680,800,0],['t_itbvi','ITBVI','mL/m²',850,1000,0],['t_evlwi','EVLWI','mL/kg',3,7,1],['t_pvpi','PVPI','',1,3,1],['t_gef','GEF','%',25,35,0],['t_cfi','CFI','/min',4.5,6.5,1],['t_cpi','CPI','W/m²',.5,.7,2]];
+const P_TILES=[['p_ci','PCCI','L/min/m²',3,5,2,1],['p_svi','SVI','mL/m²',40,60,0],['p_svv','SVV','%',null,10,0],['p_ppv','PPV','%',null,10,0],['p_svri','SVRI','dyn·s·cm⁻⁵·m²',1700,2400,0],['p_dpmx','dPmx','mmHg/s',1200,2000,0],['p_map','MAP','mmHg',65,null,0],['p_scv','ScvO₂','%',70,null,0]];
+const F_TILES=[['f_ci','CI','L/min/m²',2.5,4,2,1],['f_co','CO','L/min',4,8,1],['f_sv','SV','mL',60,100,0],['f_svi','SVI','mL/m²',33,47,0],['f_svv','SVV','%',null,13,0],['f_ppv','PPV','%',null,13,0],['f_svr','SVR','dyn·s·cm⁻⁵',800,1200,0],['f_svri','SVRI','dyn·s·cm⁻⁵·m²',1970,2390,0],['f_map','MAP','mmHg',65,null,0],['f_scv','ScvO₂','%',70,null,0]];
+const rng=(lo,hi,d)=>lo!=null&&hi!=null?`${lo.toFixed(d>1?1:d)}–${hi.toFixed(d>1?1:d)}`:hi!=null?`≤ ${hi}`:`≥ ${lo}`;
+function buildTiles(el,defs){
+  $(el).innerHTML=defs.map(([id,l,u,lo,hi,d,big])=>`<div class="tile${big?' big':''}" id="${id}"><div class="t-lab"><span>${l}</span><span class="flag"></span></div><div class="t-val"><span class="v">—</span><span class="u">${u}</span></div><div class="t-rng">${rng(lo,hi,d)}</div></div>`).join('');
+}
+const TILEMAP={}; [...TD_TILES,...P_TILES,...F_TILES].forEach(t=>TILEMAP[t[0]]=t);
+function setTile(id,v,invalid){
+  const [, , ,lo,hi,d]=TILEMAP[id], el=$(id); if(!el)return;
+  el.querySelector('.v').textContent=fmt(v,d);
+  let st='ok'; if(v==null||!isFinite(v))st='none'; else if(lo!=null&&v<lo)st='low'; else if(hi!=null&&v>hi)st='high';
+  if(invalid&&v!=null)st='invalid';
+  el.dataset.s=st; el.querySelector('.flag').textContent=st==='invalid'?'INVALID':st==='low'?'LOW':st==='high'?'HIGH':'';
+}
+const dynInvalid=()=>s.vent!=='cmv'||s.rhythm==='af'||s.chest==='open';
+function renderTiles(){
+  const inv=dynInvalid();
+  setTile('p_ci',picco.ci);setTile('p_svi',picco.svi);setTile('p_svv',picco.svv,inv);setTile('p_ppv',picco.ppv,inv);
+  const ox=oxy(); setTile('p_svri',picco.svri);setTile('p_dpmx',picco.dpmx);setTile('p_map',picco.map);setTile('p_scv',ox.scv);setTile('f_scv',ox.scv);setTile('f_ppv',flo.ppv,inv);
+  setTile('f_ci',flo.ci);setTile('f_co',flo.co);setTile('f_sv',flo.sv);setTile('f_svi',flo.svi);setTile('f_svv',flo.svv,inv);
+  setTile('f_svr',flo.svr);setTile('f_svri',flo.svri);setTile('f_map',flo.map);
+  const m=td.mean||{}; setTile('t_ci',m.ci);setTile('t_gedvi',m.gedvi);setTile('t_itbvi',m.itbvi);setTile('t_evlwi',m.evlwi);
+  setTile('t_pvpi',m.pvpi);setTile('t_gef',m.gef);setTile('t_cfi',m.cfi);setTile('t_cpi',m.cpi);
+  // calibration bar
+  if(!cal){$('calbar').innerHTML='<span class="pill crit">Not calibrated</span> Inject a bolus to calibrate the pulse contour.';}
+  else{const age=simT-cal.t, ch=Math.abs(picco.map/cal.map-1)*100, drift=ch>15||cal.line!==s.line;
+    $('calbar').innerHTML=`<span class="pill ${drift?'warn':'ok'}">${drift?'Recalibrate':'Calibrated'}</span> Last TD ${age<90?Math.round(age)+' s':(age/60).toFixed(1)+' min'} ago${drift?` · ${cal.line!==s.line?'line damping changed':'MAP changed '+ch.toFixed(0)+'%'} since calibration`:''}<span style="color:var(--dim)"> · in practice: recalibrate at least every 8 h and after any major haemodynamic change</span>`;}
+  // FloTrac reliability
+  const rel=[];
+  if(eff.svri<1300)rel.push(['warn','Low SVR (vasoplegia): autocalibrated CO tends to read low.']);
+  if(radGrad()>4)rel.push(['warn',`Radial MAP reads ~${radGrad().toFixed(0)} mmHg below femoral (vasoplegia ± high-dose norepinephrine).`]);
+  if(s.line!=='ok')rel.push(['warn',s.line==='over'?'Overdamped trace: pulse pressure and SV under-read.':'Underdamped trace: systolic overshoot, SV over-read.']);
+  if(s.rhythm==='af')rel.push(['crit','Irregular rhythm: SVV invalid, CO averaging less reliable.']);
+  if(s.vent!=='cmv')rel.push(['crit','Spontaneous breathing: SVV invalid.']);
+  if(s.chest==='open')rel.push(['crit','Open chest: SVV invalid.']);
+  if(s.vent==='cmv'&&s.tv<8&&s.rhythm==='sinus'&&s.chest==='closed')rel.push(['warn',`Tidal volume ${s.tv} mL/kg: low SVV may be a false negative.`]);
+  if(!rel.length)rel.push(['ok','Conditions valid for CO and SVV.']);
+  $('f_rel').innerHTML=rel.map(([c,t])=>`<li><span class="dot ${c==='ok'?'':c}"></span><span>${t}</span></li>`).join('');
+  // arterial header
+  const L=win(5), g=mode==='flotrac'?radGrad():0; if(L.length){$('a_sd').textContent=`${fmt(avg(L.map(b=>b.sbp))-g)}/${fmt(avg(L.map(b=>b.dbp))-g)}`;$('a_map').textContent=`(${fmt(avg(L.map(b=>b.map))-g)})`;$('a_hr').textContent=fmt(60/avg(L.map(b=>b.RR)));}
+  $('a_cvp').textContent=fmt(derived(eff).CVP); $('a_scv').textContent=fmt(ox.scv); $('a_lac').textContent=fmt(lac,1);
+  const bd=[[s.rhythm==='af'?'crit':'ok',s.rhythm==='af'?'AF':'Sinus'],[s.vent==='cmv'?'ok':'crit',s.vent==='cmv'?`VC ${s.tv} mL/kg`:'Spont. efforts'],[s.line==='ok'?'ok':'warn',s.line==='ok'?'Line optimal':s.line==='over'?'Overdamped':'Underdamped']];
+  if(s.plr)bd.push(['warn','PLR']); if(s.norad>0)bd.push(['', `NE ${s.norad.toFixed(2)}`]); if(s.eeo)bd.push(['warn','EEO hold']); if(s.dobu>0)bd.push(['',`Dobu ${s.dobu}`]);
+  $('badges').innerHTML=bd.map(([c,t])=>`<span class="pill ${c}">${t}</span>`).join('');
+}
+function renderTDTable(){
+  const S=td.series; if(!S.length){$('tdtable').innerHTML='';return;}
+  const m=td.mean;
+  $('tdtable').innerHTML=`<thead><tr><th>Bolus</th><th>CI</th><th>Δ vs mean</th><th>GEDVI</th><th>EVLWI</th><th>MTt s</th><th>DSt s</th></tr></thead><tbody>${
+    S.map((x,i)=>{const dv=(x.ci/m.ci-1)*100;return `<tr><td>${i+1}${x.cold?'':' (room)'}${x.site==='fem'?' · femoral!':x.site==='femc'?' · femoral':''}</td><td>${fmt(x.ci,2)}</td><td class="${Math.abs(dv)>10?'bad':''}">${dv>=0?'+':''}${dv.toFixed(1)}%</td><td>${fmt(x.gedvi)}</td><td>${fmt(x.evlwi,1)}</td><td>${fmt(x.MTt,1)}</td><td>${fmt(x.DSt,1)}</td></tr>`;}).join('')
+  }</tbody><tfoot><tr><td>Mean (n=${S.length})</td><td>${fmt(m.ci,2)}</td><td>${S.some(x=>Math.abs(x.ci/m.ci-1)>.1)?'repeat: &gt;10% spread':'accepted'}</td><td>${fmt(m.gedvi)}</td><td>${fmt(m.evlwi,1)}</td><td></td><td></td></tr></tfoot>`;
+}
+
+/* ---------- canvases ---------- */
+function prep(cv){const r=cv.getBoundingClientRect(), dpr=window.devicePixelRatio||1;
+  if(cv.width!==Math.round(r.width*dpr)||cv.height!==Math.round(r.height*dpr)){cv.width=Math.round(r.width*dpr);cv.height=Math.round(r.height*dpr);}
+  const ctx=cv.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);return [ctx,r.width,r.height];}
+const font=(px,mono)=>`${px}px ${mono?'"IBM Plex Mono",monospace':'"IBM Plex Sans",sans-serif'}`;
+
+function drawArt(){
+  const [x,W,H]=prep($('artc')); x.clearRect(0,0,W,H);
+  const L=34, top=6, bot=H-14, yv=p=>bot-(p/200)*(bot-top), off=mode==='flotrac'?-radGrad():0;
+  x.font=font(10,1); x.fillStyle=C.muted; x.textAlign='right'; x.textBaseline='middle';
+  for(const p of [0,50,100,150,200]){x.strokeStyle=C.grid;x.lineWidth=1;x.beginPath();x.moveTo(L,yv(p));x.lineTo(W,yv(p));x.stroke();x.fillText(p,L-6,yv(p));}
+  const n=artBuf.length, gap=Math.round(.25*FS), sx=i=>L+(i/n)*(W-L);
+  x.strokeStyle=C.art; x.lineWidth=2; x.lineJoin='round';
+  const seg=(a,b)=>{x.beginPath();let st=false;for(let i=a;i<b;i++){const v=artBuf[i];if(!isFinite(v)){st=false;continue;}const yy=yv(clamp(v+off,-5,205));if(!st){x.moveTo(sx(i),yy);st=true;}else x.lineTo(sx(i),yy);}x.stroke();};
+  seg(0,artW); if(artW+gap<n) seg(artW+gap,n);
+  if(simT-flushMark<4){x.fillStyle=C.warn;x.textAlign='left';x.font=font(12);x.fillText('Fast flush: count oscillations after release (optimal 1–2)',L+8,top+10);}
+}
+function drawTD(prog){
+  const [x,W,H]=prep($('tdc')); x.clearRect(0,0,W,H);
+  const S=[...td.series]; const cur=td.anim?td.anim.m:null; const all=cur?[...S,cur]:S;
+  const L=50,R=10,T=10,B=H-24;
+  if(!all.length){x.fillStyle=C.dim;x.font=font(13);x.fillText('Inject a cold bolus into the CVC to record a curve.',L,H/2);return;}
+  const tMax=Math.ceil(Math.max(...all.map(m=>m.tEnd))/10)*10, yMax=Math.max(...all.map(m=>m.peak))*1.25;
+  const sx=t=>L+t/tMax*(W-L-R), sy=v=>B-v/yMax*(B-T);
+  x.font=font(10,1); x.fillStyle=C.muted; x.textBaseline='middle';
+  for(let t=0;t<=tMax;t+=10){x.strokeStyle=C.grid;x.beginPath();x.moveTo(sx(t),T);x.lineTo(sx(t),B);x.stroke();x.textAlign='center';x.fillText(t+' s',sx(t),B+12);}
+  const ystep=yMax>.4?.1:yMax>.2?.05:.025;
+  for(let v=0;v<=yMax;v+=ystep){x.strokeStyle=C.grid;x.beginPath();x.moveTo(L,sy(v));x.lineTo(W-R,sy(v));x.stroke();x.textAlign='right';x.fillText(v.toFixed(ystep<.05?3:2),L-5,sy(v));}
+  x.save();x.translate(8,(T+B)/2);x.rotate(-Math.PI/2);x.textAlign='center';x.fillText('−ΔT °C',0,0);x.restore();
+  const draw=(m,alpha,upTo)=>{x.globalAlpha=alpha;x.strokeStyle=C.picco;x.lineWidth=alpha<1?1.2:2;x.beginPath();
+    const lim=Math.min(m.ys.length,Math.round(upTo/.1)+1);for(let i=0;i<lim;i++){const t=i*.1;i?x.lineTo(sx(t),sy(m.ys[i])):x.moveTo(sx(t),sy(m.ys[i]));}x.stroke();x.globalAlpha=1;};
+  S.forEach((m,i)=>draw(m,cur||i<S.length-1?.35:1,m.tEnd));
+  const show=cur||S[S.length-1];
+  if(cur) draw(cur,1,prog*cur.tEnd);
+  if(!cur||prog>=.999){
+    const m=show; x.setLineDash([4,4]);x.lineWidth=1;
+    x.strokeStyle=C.flo;x.beginPath();x.moveTo(sx(m.MTt),T);x.lineTo(sx(m.MTt),B);x.stroke();
+    x.strokeStyle=C.muted;x.beginPath();x.moveTo(sx(m.t0),T);x.lineTo(sx(m.t0),B);x.stroke();x.setLineDash([]);
+    const pkT=m.t0+.8*m.DSt, a=pkT+.22*m.DSt, b=Math.min(m.tEnd,pkT+1.6*m.DSt);
+    x.fillStyle='rgba(54,207,194,.12)';x.fillRect(sx(a),T,sx(b)-sx(a),B-T);
+    x.font=font(11); x.textAlign='left'; x.fillStyle=C.flo; x.fillText(`MTt ${m.MTt.toFixed(1)} s`,Math.min(sx(m.MTt)+4,W-80),T+8);
+    x.fillStyle=C.picco; x.fillText(`DSt ${m.DSt.toFixed(1)} s (exponential downslope)`,Math.min(sx(a)+4,W-210),T+24);
+    x.fillStyle=C.muted; x.fillText('appearance',Math.min(sx(m.t0)+4,W-80),B-10);
+  }
+}
+function drawTrend(){
+  const [x,W,H]=prep($('trc')); x.clearRect(0,0,W,H);
+  const L=34,R=8,T=8,B=H-20, span=300, t1=simT, t0=t1-span, truth=$('showTruth').checked;
+  const vals=trend.flatMap(p=>[mode!=='flotrac'?p.p:null,mode!=='picco'?p.f:null,truth?p.tv:null]).filter(v=>v!=null&&isFinite(v));
+  const yMax=Math.max(6,Math.ceil((Math.max(...vals,0))*1.15));
+  const sx=t=>L+(t-t0)/span*(W-L-R), sy=v=>B-v/yMax*(B-T);
+  x.font=font(10,1);x.fillStyle=C.muted;x.textBaseline='middle';
+  for(let v=0;v<=yMax;v+=1){x.strokeStyle=C.grid;x.beginPath();x.moveTo(L,sy(v));x.lineTo(W-R,sy(v));x.stroke();x.textAlign='right';x.fillText(v,L-6,sy(v));}
+  x.textAlign='center';for(let m=0;m<=5;m++){x.fillText(m===5?'now':`−${5-m} min`,sx(t0+m*60),B+12);}
+  [[3,'rgba(77,196,140,.07)']].forEach(([lo,c])=>{x.fillStyle=c;x.fillRect(L,sy(5),W-L-R,sy(lo)-sy(5));});
+  events.filter(e=>e.t>t0).forEach(e=>{x.strokeStyle=C.line;x.lineWidth=1;x.beginPath();x.moveTo(sx(e.t),T);x.lineTo(sx(e.t),B);x.stroke();x.save();x.translate(sx(e.t)+3,T+4);x.rotate(Math.PI/2);x.fillStyle=C.dim;x.textAlign='left';x.font=font(10,1);x.fillText(e.label,0,0);x.restore();});
+  const ln=(k,c,dash)=>{x.strokeStyle=c;x.lineWidth=2;x.setLineDash(dash||[]);x.beginPath();let st=false;trend.forEach(p=>{if(p.time<t0)return;const v=p[k];if(v==null||!isFinite(v)){st=false;return;}st?x.lineTo(sx(p.time),sy(v)):x.moveTo(sx(p.time),sy(v));st=true;});x.stroke();x.setLineDash([]);};
+  if(truth)ln('tv',C.tru,[5,4]); if(mode!=='picco')ln('f',C.flo); if(mode!=='flotrac')ln('p',C.picco);
+}
+function drawStarling(){
+  const [x,W,H]=prep($('stc')); x.clearRect(0,0,W,H);
+  const L=40,R=10,T=10,B=H-30, gx=g=>L+(g-300)/900*(W-L-R), sy=v=>B-v/75*(B-T);
+  x.font=font(10,1);x.fillStyle=C.muted;x.textBaseline='middle';
+  for(let v=0;v<=75;v+=25){x.strokeStyle=C.grid;x.beginPath();x.moveTo(L,sy(v));x.lineTo(W-R,sy(v));x.stroke();x.textAlign='right';x.fillText(v,L-6,sy(v));}
+  x.textAlign='center';for(let g=300;g<=1200;g+=150){x.fillText(g,gx(g),B+12);}
+  x.fillText('GEDVI mL/m²',(L+W)/2,B+25); x.save();x.translate(10,(T+B)/2);x.rotate(-Math.PI/2);x.fillText('SVI mL/m²',0,0);x.restore();
+  x.fillStyle='rgba(77,196,140,.08)';x.fillRect(gx(680),T,gx(800)-gx(680),B-T);
+  const curve=(c,col,w)=>{x.strokeStyle=col;x.lineWidth=w;x.beginPath();for(let g=300;g<=1200;g+=10){const v=sviFn(g,c);g===300?x.moveTo(gx(g),sy(v)):x.lineTo(gx(g),sy(v));}x.stroke();};
+  curve(1,C.line,1.5); curve(eff.c,C.tru,2);
+  const dG=s.vent==='cmv'?9*s.tv*(s.chest==='open'?.3:1):60;
+  x.strokeStyle=C.flo;x.lineWidth=4;x.beginPath();for(let g=eff.G-dG/2;g<=eff.G+dG/2;g+=4){const v=sviFn(g,eff.c);g===eff.G-dG/2?x.moveTo(gx(g),sy(v)):x.lineTo(gx(g),sy(v));}x.stroke();
+  x.fillStyle=C.fg;x.beginPath();x.arc(gx(eff.G),sy(sviFn(eff.G,eff.c)),5,0,7);x.fill();
+  x.fillStyle=C.muted;x.textAlign='left';x.font=font(11);x.fillText('grey: normal heart · gold: respiratory preload swing',L+6,T+8);
+}
+
+/* ---------- interpretation ---------- */
+function renderInterpFlo(){
+  const ci=flo.ci, map=flo.map, svri=flo.svri, svv=flo.svv, inv=dynInvalid(), lowTV=s.vent==='cmv'&&s.tv<8;
+  const cat=(v,lo,hi)=>v<lo?'low':v>hi?'high':'normal';
+  const prof=[['Flow',`CI ${fmt(ci,2)} L/min/m² · ${cat(ci,2.5,4)} (FloTrac range 2.5–4.0)`],['Pressure',`MAP ${fmt(map)} mmHg · SVRI ${fmt(svri)} (${cat(svri,1970,2390)})`],
+    ['Dynamic preload',inv?'SVV not interpretable (see validity)':`SVV ${fmt(svv)}% · ${svv>13?'likely fluid responsive':svv<10?(lowTV?'low, but may be a false negative at low VT':'unlikely fluid responsive'):'grey zone (10–13%)'}`],
+    ['Not measured','Volumetric preload (GEDVI), contractility (GEF/CFI) and lung water (EVLWI) need thermodilution']];
+  {const ox=oxy(); prof.push(['Oxygen',`ScvO₂ ${fmt(ox.scv)}% · lactate ${fmt(lac,1)} mmol/L → ${ox.scv<70?'delivery inadequate for demand':lac>2&&ox.scv>=75?'high ScvO₂ with raised lactate: extraction defect, a normal ScvO₂ does not exclude hypoperfusion':lac>2?'raised lactate':'adequate'}`]);}
+  const acts=[];
+  if(map<65&&svri<1970&&ci>=2.5) acts.push('<b>Vasopressor.</b> Flow is adequate, SVRI low: vasoplegia.');
+  if(ci<2.5){ if(!inv&&svv>13) acts.push('<b>Volume.</b> Low CI with high SVV: preload responsive.');
+    else if(!inv&&svv<10&&!lowTV) acts.push('<b>Inotrope or reassess.</b> Low CI without preload responsiveness: think pump failure. Confirm with echo.');
+    else acts.push('<b>Test preload</b> with a PLR before giving fluid.'); }
+  if(inv||lowTV) acts.push(`<b>Use PLR</b>${s.vent==='cmv'?' or end-expiratory occlusion':''}${inv?': SVV is invalid':' at low tidal volume'}. Threshold: FloTrac CI +10% for PLR; EEO needs beat-to-beat CO, so prefer PLR on FloTrac.`);
+  if(!acts.length) acts.push('<b>No change.</b> Flow and pressure are adequate; keep monitoring trends.');
+  const v=[];
+  if(s.vent!=='cmv')v.push(['crit','Spontaneous breathing: SVV invalid.']);
+  if(s.rhythm==='af')v.push(['crit','Irregular rhythm: beat-to-beat variation is not respiratory.']);
+  if(s.chest==='open')v.push(['crit','Open chest: respiratory transmission lost.']);
+  if(lowTV&&!inv)v.push(['warn',`VT ${s.tv} mL/kg: try a tidal volume challenge (6 → 8 mL/kg for 1 min, ΔPPV ≥ 3.5%).`]);
+  if(radGrad()>4)v.push(['warn',`Radial MAP ~${radGrad().toFixed(0)} mmHg below femoral: consider a femoral arterial line before escalating vasopressors.`]);
+  if(s.vent==='cmv'&&s.peep>=12)v.push(['warn',`PEEP ${s.peep} cmH₂O: CVP over-reads transmural filling and venous return is reduced. Responsiveness may change if PEEP is lowered.`]);
+  if(s.line!=='ok')v.push(['warn','Damping problem: FloTrac SV is calculated from the waveform. Fix the line first.']);
+  if(eff.svri<1300)v.push(['warn','Vasoplegia: autocalibrated CO reads low. A calibrated method (thermodilution) is preferred.']);
+  $('interp').innerHTML=`<dl class="prof">${prof.map(([k,t])=>`<dt>${k}</dt><dd>${t}</dd>`).join('')}</dl>
+    <div><h3 style="margin-bottom:6px">Suggested direction</h3><ul class="acts">${acts.map(a=>`<li>${a}</li>`).join('')}</ul></div>
+    ${v.length?`<div><h3 style="margin-bottom:6px">Validity</h3><ul class="rel" style="margin:0">${v.map(([c,t])=>`<li><span class="dot ${c}"></span><span>${t}</span></li>`).join('')}</ul></div>`:''}`;
+}
+function renderInterp(){
+  if(!$('showInterp').checked)return;
+  if(quiz&&!quiz.answered){$('interp').innerHTML='<p class="empty">Hidden in unknown-patient mode. Measure, test responsiveness, then submit your diagnosis.</p>';return;}
+  if(mode==='flotrac'){renderInterpFlo();return;}
+  const m=td.mean, ci=picco.ci??flo.ci, map=picco.map??flo.map, svri=picco.svri??flo.svri;
+  const svv=picco.svv??flo.svv, inv=dynInvalid(), lowTV=s.vent==='cmv'&&s.tv<8;
+  const cat=(v,lo,hi)=>v<lo?'low':v>hi?'high':'normal';
+  const prof=[];
+  prof.push(['Flow',`CI ${fmt(ci,2)} L/min/m² · ${cat(ci,3,5)}`]);
+  prof.push(['Pressure',`MAP ${fmt(map)} mmHg · SVRI ${fmt(svri)} (${cat(svri,1700,2400)})`]);
+  if(m){prof.push(['Volumetric preload',`GEDVI ${fmt(m.gedvi)} mL/m² · ${m.gedvi<680?'low':m.gedvi>800?'high':'normal'}`]);
+    prof.push(['Contractility',`GEF ${fmt(m.gef)}% · CFI ${fmt(m.cfi,1)} · ${m.gef<25||m.cfi<4.5?'reduced':'preserved'}`]);
+    prof.push(['Lung water',`EVLWI ${fmt(m.evlwi,1)} mL/kg${m.evlwi>=10?` · pulmonary oedema, PVPI ${fmt(m.pvpi,1)} → ${m.pvpi>3?'permeability (ARDS/sepsis)':'hydrostatic (cardiac/overload)'}`:' · no oedema'}`]);}
+  {const ox=oxy(); prof.push(['Oxygen',`ScvO₂ ${fmt(ox.scv)}% · lactate ${fmt(lac,1)} mmol/L → ${ox.scv<70?'delivery inadequate for demand':lac>2&&ox.scv>=75?'high ScvO₂ with raised lactate: extraction defect, a normal ScvO₂ does not exclude hypoperfusion':lac>2?'raised lactate':'adequate'}`]);}
+  prof.push(['Dynamic preload',inv?'SVV/PPV not interpretable (see validity)':`SVV ${fmt(svv)}% · ${svv>12?'likely fluid responsive':svv<10?(lowTV?'low, but may be false negative at low VT':'unlikely fluid responsive'):'grey zone'}`]);
+  const acts=[];
+  if(m){
+    if(ci<3){
+      if(m.gedvi<680) acts.push(`<b>Volume.</b> Low CI with low GEDVI: preload deficit.${m.evlwi>=10?' EVLWI is already high: small boluses with a responsiveness test each time.':''}`);
+      else if(m.gef<25||m.cfi<4.5) acts.push(`<b>Inotrope.</b> Low CI despite adequate GEDVI with low GEF/CFI: pump failure.${m.evlwi>=10&&m.gedvi>800?' High GEDVI and EVLWI: consider fluid removal.':''}`);
+      else acts.push('<b>Reassess.</b> Low CI with adequate preload and contractility indices: check heart rate, valves, tamponade, RV.');
+    } else {
+      if(map<65&&svri<1700) acts.push('<b>Vasopressor.</b> Flow is adequate, SVRI low: vasoplegia.');
+      if(m.gedvi<680&&!inv&&svv>12) acts.push('<b>Volume</b> may still raise CI: low GEDVI and high SVV.');
+    }
+    if((m.evlwi>=10&&m.gedvi>800)) acts.push('<b>Negative balance</b> when haemodynamics allow: high EVLWI with high GEDVI.');
+    else if(m.evlwi>=10&&m.pvpi>3) acts.push('<b>Restrict fluid.</b> Permeability oedema: every bolus raises EVLWI. Prove responsiveness first.');
+  } else acts.push('No thermodilution yet: volumetric preload, contractility and lung water are unknown.');
+  if(inv||lowTV) acts.push(`<b>Use PLR</b>${s.vent==='cmv'?' or a 15-s end-expiratory occlusion':''} to test fluid responsiveness${inv?': SVV/PPV are invalid':' at low tidal volume'}. Read pulse contour CI: PLR +10%, EEO +5%.`);
+  if(m&&lastEventT>m.t) acts.push('<b>Repeat thermodilution.</b> Volumetrics predate your last intervention.');
+  const v=[];
+  if(s.vent!=='cmv')v.push(['crit','Spontaneous breathing: SVV and PPV invalid.']);
+  if(s.rhythm==='af')v.push(['crit','Irregular rhythm: beat-to-beat variation is not respiratory.']);
+  if(s.chest==='open')v.push(['crit','Open chest: respiratory transmission lost.']);
+  if(lowTV&&!inv)v.push(['warn',`VT ${s.tv} mL/kg: try a tidal volume challenge (6 → 8 mL/kg for 1 min, ΔPPV ≥ 3.5%).`]);
+  if(s.line!=='ok')v.push(['warn','Damping problem: fix the line, then recalibrate PiCCO.']);
+  if(eff.svri<1300)v.push(['warn','Vasoplegia: prefer calibrated CO (PiCCO) over FloTrac.']);
+  if(cal&&Math.abs(picco.map/cal.map-1)>.15)v.push(['warn','MAP changed > 15% since calibration: recalibrate PiCCO.']);
+  if(td.series.some(t=>t.site==='fem'))v.push(['warn','Femoral injection not entered: GEDVI/ITBVI overestimated.']);
+  if(s.vent==='cmv'&&s.peep>=12)v.push(['warn',`PEEP ${s.peep} cmH₂O: CVP over-reads transmural filling and venous return is reduced. Responsiveness may change if PEEP is lowered.`]);
+  $('interp').innerHTML=`<dl class="prof">${prof.map(([k,t])=>`<dt>${k}</dt><dd>${t}</dd>`).join('')}</dl>
+    <div><h3 style="margin-bottom:6px">Suggested direction</h3><ul class="acts">${acts.map(a=>`<li>${a}</li>`).join('')}</ul></div>
+    ${v.length?`<div><h3 style="margin-bottom:6px">Validity</h3><ul class="rel" style="margin:0">${v.map(([c,t])=>`<li><span class="dot ${c}"></span><span>${t}</span></li>`).join('')}</ul></div>`:''}`;
+}
+function renderTruth(){
+  if(!$('showTruth').checked||(quiz&&!quiz.answered))return;
+  const d=derived(eff), dG=9*s.tv*(s.chest==='open'?.3:1);
+  const tsvv=s.vent==='cmv'?(sviFn(eff.G+dG/2,eff.c)-sviFn(eff.G-dG/2,eff.c))/d.SVI*100:null;
+  const err=(a)=>a==null?'—':((a/d.CI-1)*100>=0?'+':'')+((a/d.CI-1)*100).toFixed(0)+'%';
+  const rows=[['CI',fmt(d.CI,2)],['SVI',fmt(d.SVI)],['MAP',fmt(d.MAP)],['CVP',fmt(d.CVP)],['SVRI',fmt(eff.svri)],['GEDVI',fmt(eff.G)],['EVLWI',fmt(eff.evlwi,1)],['PVPI',fmt(eff.evlwi*PBW/(.25*eff.G*BSA),1)],['SVV (Starling)',tsvv==null?'n/a':fmt(tsvv)+'%'],['DO₂I',fmt(oxy().do2i)],['SvO₂',fmt(oxy().svo2)+'%'],['Radial−femoral MAP','−'+fmt(radGrad())],...(mode!=='flotrac'?[['PiCCO CI error',err(picco.ci)]]:[]),...(mode!=='picco'?[['FloTrac CI error',err(flo.ci)]]:[])];
+  $('truth').innerHTML=rows.map(([k,v])=>`<div><span>${k}</span><span>${v}</span></div>`).join('');
+  drawStarling();
+}
+
+/* ---------- loop ---------- */
+let acc=0,last=performance.now(),secT=0,uiT=0;
+function tick(now){
+  const dt=Math.min(.05,(now-last)/1000); last=now;
+  if(running){acc+=dt; while(acc>=DT){step();acc-=DT;}
+    if(simT-secT>=1){secT=simT;lac+=(oxy().lacT-lac)*(1-Math.exp(-1/45));computeFlo();computePicco();checkTests();
+      if(s.eeo&&simT>=eeoUntil){s.eeo=false;addEvent('EEO end');syncControls();}
+      trend.push({time:simT,p:picco.ci,f:flo.ci,tv:derived(eff).CI});
+      while(trend.length&&trend[0].time<simT-310)trend.shift(); drawTrend(); renderInterp(); renderTruth();}
+    if(simT-uiT>=.5){uiT=simT;renderTiles();}
+  }
+  if(td.anim){const p=Math.min(1,(now-td.anim.start)/3500);drawTD(p);if(p>=1){const m=td.anim.m;td.anim=null;$('inject').disabled=false;finishInjection(m);}}
+  drawArt(); requestAnimationFrame(tick);
+}
+
+/* ---------- controls ---------- */
+function syncControls(){
+  document.querySelectorAll('.seg[data-key]').forEach(g=>g.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',String(s[g.dataset.key]===b.dataset.v))));
+  document.querySelectorAll('.seg[data-td]').forEach(g=>g.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',String(String(td[g.dataset.td])===b.dataset.v))));
+  $('norad').value=s.norad;$('dobu').value=s.dobu;$('tv').value=s.tv;$('peep').value=s.peep;$('peepO').textContent=`${s.peep} cmH₂O`;$('peep').disabled=s.vent!=='cmv';
+  $('noradO').textContent=`${(+s.norad).toFixed(2)} µg/kg/min`;$('dobuO').textContent=`${s.dobu} µg/kg/min`;$('tvO').textContent=`${s.tv} mL/kg PBW`;
+  $('tv').disabled=s.vent!=='cmv'; $('plr').setAttribute('aria-pressed',String(s.plr));
+  $('eeo').setAttribute('aria-pressed',String(s.eeo)); $('eeo').disabled=s.vent!=='cmv'||s.eeo; $('eeo').title=s.vent!=='cmv'?'Needs controlled ventilation':'';
+  if(!td.anim)$('inject').disabled=!running;
+  document.querySelectorAll('#scen button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.k===scenKey)));
+}
+function load(key,isQuiz){
+  scenKey=key; const sc=SCEN[key]; s={...BASE,...sc.p}; eff=targets(); s.map0=derived(eff).MAP; lac=oxy().lacT; eeoUntil=-1; tdNote('');
+  simT=0;beat=null;beats=[];fy=derived(eff).MAP;fv=0;lastY=fy;artBuf.fill(NaN);artW=0;flushUntil=-10;flushMark=-10;
+  picco={};flo={};cal=null;td.series=[];td.mean=null;td.anim=null;$('inject').disabled=false;trend=[];events=[];pending=[];logRows=[];lastEventT=-1;
+  for(let i=0;i<24*FS;i++)step();
+  computeFlo();computePicco(); if(!isQuiz)for(let i=0;i<3;i++)inject(true);
+  events=[]; secT=simT; uiT=simT;
+  if(isQuiz){quiz={key,n:(quiz?.n||0)+1,answered:false,did:{}};$('vignette').textContent=`Unknown patient #${quiz.n}: ventilated ICU patient in shock. Measure, test responsiveness, then diagnose.`;$('task').textContent='';$('verdict').innerHTML='';}
+  else{$('vignette').textContent=sc.v; $('task').innerHTML=`<b>Try this:</b> ${mode==='flotrac'?sc.ft:sc.t}`;}
+  renderTDTable(); syncControls(); renderTiles(); renderLog(); drawTD(); renderInterp(); renderTruth(); drawTrend();
+}
+$('scen').innerHTML=Object.entries(SCEN).map(([k,v])=>`<button type="button" data-k="${k}">${v.name}</button>`).join('');
+$('scen').addEventListener('click',e=>{const b=e.target.closest('button');if(b)load(b.dataset.k);});
+$('dxSel').innerHTML=Object.entries(SCEN).filter(([k])=>k!=='traps').map(([k,v])=>`<option value="${k}">${v.name}</option>`).join('');
+function newCase(){const ks=Object.keys(SCEN).filter(k=>k!=='traps'&&k!==quiz?.key);load(ks[Math.floor(Math.random()*ks.length)],true);}
+function setQuiz(on){
+  R_qs(on); $('scen').hidden=on; $('quizBox').hidden=!on; $('showTruth').disabled=on;
+  if(on){$('showTruth').checked=false;$('truthPanel').hidden=true;$('lgTrue').hidden=true;newCase();}
+  else{quiz=null;load(scenKey);}
+}
+function R_qs(on){document.querySelectorAll('#qSeg button').forEach(b=>b.setAttribute('aria-pressed',String((b.dataset.q==='1')===on)));}
+$('qSeg').addEventListener('click',e=>{const b=e.target.closest('button');if(b)setQuiz(b.dataset.q==='1');});
+$('newCase').addEventListener('click',newCase);
+$('dxSubmit').addEventListener('click',()=>{if(!quiz)return;
+  const g=$('dxSel').value, k=quiz.key, ok=g===k; quiz.answered=true;
+  const need=mode==='flotrac'?[['PLR','a PLR or fluid challenge']]:[['TD','thermodilution'],['PLR','a PLR or fluid challenge']];
+  const miss=need.filter(([n])=>!(quiz.did[n]||(n==='PLR'&&(quiz.did.Bolus||quiz.did.EEO)))).map(([,t])=>t);
+  $('verdict').innerHTML=`<div class="verdict ${ok?'right':'wrong'}"><b>${ok?'Correct':'Not quite'}: ${SCEN[k].name}.</b><ul>${SCEN[k].key.map(t=>`<li>${t}</li>`).join('')}</ul>${miss.length?`<div style="margin-top:6px;color:var(--muted)">You did not do: ${miss.join(', ')}.</div>`:''}</div>`;
+  $('showTruth').disabled=false; renderInterp();});
+document.querySelectorAll('.seg[data-key]').forEach(g=>g.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;
+  const k=g.dataset.key; if(s[k]===b.dataset.v)return; s[k]=b.dataset.v; addEvent(b.textContent); syncControls(); renderTiles(); renderInterp();}));
+document.querySelectorAll('.seg[data-td]').forEach(g=>g.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;
+  const k=g.dataset.td; td[k]=k==='vol'?+b.dataset.v:b.dataset.v; syncControls(); if(k==='site'&&b.dataset.v!=='jug')tdNote(b.dataset.v==='fem'?'Femoral venous injection with the site not entered: the extra femoral-iliac-IVC volume is counted as GEDV, so GEDVI and ITBVI read ~15–20% high.':'Femoral site entered: the monitor applies its correction formula; residual bias is small.');}));
+document.querySelectorAll('[data-fluid]').forEach(b=>b.addEventListener('click',()=>{
+  const ml=+b.dataset.fluid;
+  if(ml>0){startTest(`Bolus ${ml} mL`); s.vol=clamp(s.vol+.11*ml,300,1400);
+    const pv=s.evlwi*PBW/(.25*eff.G*BSA); s.evlwi+=(pv>3?1.2:eff.G>850?.8:.1)*ml/500; addEvent(`+${ml}`);}
+  else{s.vol=clamp(s.vol-55,300,1400); if(s.evlwi>7)s.evlwi=Math.max(6,s.evlwi-.6); addEvent('−500');}
+  renderInterp();}));
+$('eeo').addEventListener('click',()=>{if(s.vent!=='cmv'||s.eeo)return; s.eeo=true; eeoUntil=simT+15; startTest('EEO 15 s',15,5); addEvent('EEO'); syncControls();});
+$('plr').addEventListener('click',()=>{s.plr=!s.plr; if(s.plr)startTest('PLR'); addEvent(s.plr?'PLR on':'PLR off'); syncControls();});
+['norad','dobu','tv','peep'].forEach(id=>{const el=$(id);
+  el.addEventListener('input',()=>{s[id]=+el.value;syncControls();});
+  el.addEventListener('change',()=>{addEvent(id==='norad'?`NE ${(+el.value).toFixed(2)}`:id==='dobu'?`Dobu ${el.value}`:id==='peep'?`PEEP ${el.value}`:`VT ${el.value}`);renderInterp();});});
+$('flush').addEventListener('click',()=>{flushUntil=simT+.45;flushMark=simT;});
+$('inject').addEventListener('click',()=>inject(false));
+$('newSeries').addEventListener('click',()=>{td.series=[];td.mean=null;renderTDTable();renderTiles();drawTD();renderInterp();});
+$('pause').addEventListener('click',()=>{running=!running;$('pause').textContent=running?'Pause':'Resume';last=performance.now();syncControls();if(running)tdNote('');});
+$('showInterp').addEventListener('change',e=>{$('interpPanel').hidden=!e.target.checked;renderInterp();});
+$('showTruth').addEventListener('change',e=>{$('truthPanel').hidden=!e.target.checked;$('lgTrue').hidden=!e.target.checked;renderTruth();renderLog();drawTrend();});
+window.addEventListener('resize',()=>{drawTD();drawTrend();renderTruth();});
+
+buildTiles('p_tiles',P_TILES);buildTiles('t_tiles',TD_TILES);buildTiles('f_tiles',F_TILES);
+function setMode(m){
+  mode=m; $('pPanel').hidden=m==='flotrac'; $('fPanel').hidden=m==='picco'; $('devs').classList.toggle('single',m==='flotrac');
+  $('lgP').hidden=m==='flotrac'; $('lgF').hidden=m==='picco';
+  $('artNote').textContent=m==='picco'?'Femoral arterial line with thermistor. 0–200 mmHg, 6-second sweep.':m==='flotrac'?'Radial arterial line feeding the FloTrac sensor. 0–200 mmHg, 6-second sweep.':'Both devices analyse this arterial trace. 0–200 mmHg, 6-second sweep.';
+  $('interpSub').textContent=m==='flotrac'?'SV, SVV and SVR + validity checks':'PiCCO decision tree + validity checks';
+  const sc=SCEN[scenKey]; $('task').innerHTML=`<b>Try this:</b> ${m==='flotrac'?sc.ft:sc.t}`;
+  renderLog(); renderInterp(); renderTruth(); drawTrend(); drawTD();
+}
+load('sepsis');
+requestAnimationFrame(tick);
+})();
+</script>
