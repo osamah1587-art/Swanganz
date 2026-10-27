@@ -454,7 +454,7 @@ table.prof{width:100%;border-collapse:collapse;font-size:13px}
     </div>
     <div class="grp">
       <h3>Rhythm and arterial line</h3>
-      <div class="seg" data-key="rhythm"><button type="button" data-v="sinus">Sinus</button><button type="button" data-v="af">Atrial fibrillation</button></div>
+      <div class="seg" data-key="rhythm"><button type="button" data-v="sinus">Sinus</button><button type="button" data-v="af">Atrial fibrillation</button><button type="button" data-v="lbbb">LBBB</button></div>
       <div class="seg" data-key="line"><button type="button" data-v="ok">Optimal</button><button type="button" data-v="over">Overdamped</button><button type="button" data-v="under">Underdamped</button></div>
       <p class="note">Damping is a real 2nd-order transducer model. Run a fast-flush test to see it.</p>
     </div>
@@ -465,6 +465,7 @@ table.prof{width:100%;border-collapse:collapse;font-size:13px}
       <div class="ph"><h2 style="font-size:20px">Cardiac index trend</h2><span class="sub">Last 5 minutes</span></div>
       <canvas id="trc" aria-label="Cardiac index trend"></canvas>
       <div class="legend"><span id="lgP"><i style="background:var(--picco)"></i>PiCCO PCCI</span><span id="lgF"><i style="background:var(--flo)"></i>FloTrac CI</span><span id="lgTrue" hidden><i style="background:var(--true)"></i>True CI</span><span><i style="background:var(--dim)"></i>Events</span></div>
+      <p class="cocmp" id="coCmp"></p>
     </section>
     <div class="col">
       <section class="panel interp" id="interpPanel">
@@ -610,6 +611,8 @@ tfoot td{color:var(--picco);font-weight:600}
 @media (max-width:1020px){.lower{grid-template-columns:1fr}}
 #trc{height:220px}
 .legend{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:var(--muted);margin-top:8px}
+.cocmp{margin:10px 0 0;font-size:12.5px;color:var(--muted);border-top:1px solid var(--line);padding-top:8px}
+.cocmp b{color:var(--fg);font-variant-numeric:tabular-nums}
 .legend i{display:inline-block;width:16px;height:3px;border-radius:2px;margin-right:5px;vertical-align:middle}
 .interp{display:flex;flex-direction:column;gap:12px}
 #interp{display:flex;flex-direction:column;gap:14px}
@@ -641,6 +644,9 @@ tfoot td{color:var(--picco);font-weight:600}
 {"imports":{"three":"./vendor/three/three.module.js","three/addons/":"./vendor/three/addons/"}}
 </script>
 
+<!-- ======================= SHARED PATIENT ENGINE ======================= -->
+<script src="engine.js"></script>
+
 <!-- ======================= PHYSIOLOGY + MONITOR (no dependencies) ======================= -->
 <script>
 'use strict';
@@ -649,32 +655,13 @@ const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const BSA = 1.9;
 
 /* ---------- Patient profiles: primary variables; everything else is derived ---------- */
-const SCEN = {
-  normal:{name:'Normal',short:'Baseline reference',hr:78,ra:5,pawp:9,co:5.4,svr:1150,pvr:100,vo2:250,hb:13.5,sao2:.98,kPA:1,kA:1,rr:14,swing:4,ppv:.06,pulsus:.05,fr:.5,ino:.5,ne:1.0,vwave:0,
-    key:['All pressures normal; CI 2.5–4.0','PAWP 6–12, RAP 2–6','SvO₂ 65–75%']},
-  hypo:{name:'Hypovolaemic',short:'Low preload, high SVR',hr:126,ra:2,pawp:4,co:2.9,svr:1650,pvr:130,vo2:230,hb:12,sao2:.98,kPA:1,kA:1.2,rr:24,swing:6,ppv:.25,pulsus:.08,fr:1,ino:.15,ne:1.04,vwave:0,
-    key:['Low RAP and low PAWP','Low CI with compensatory high SVR','Large pulse-pressure variation on the ventilator','Fluid raises CO briskly']},
-  lv:{name:'LV cardiogenic',short:'Pump failure, high PAWP',hr:112,ra:13,pawp:27,co:2.7,svr:1500,pvr:150,vo2:220,hb:13,sao2:.92,kPA:1.5,kA:.9,rr:26,swing:8,ppv:.06,pulsus:.06,fr:-.15,ino:1,ne:.94,vwave:.3,
-    key:['PAWP > 18 with CI < 2.2 (SCAI / Forrester "cold & wet")','High SVR, low SvO₂','RA/PAWP < 0.86 (left-dominant)','Dobutamine raises CO and lowers PAWP; fluid does not help']},
-  rv:{name:'RV failure',short:'RV infarct pattern',hr:100,ra:19,pawp:11,co:2.5,svr:1350,pvr:140,vo2:230,hb:13,sao2:.96,kPA:1,kA:1,rr:20,swing:5,ppv:.06,pulsus:.08,fr:-.3,ino:.8,ne:1.05,vwave:0,
-    key:['RAP > PAWP: RA/PAWP > 0.86','PAPi < 0.9 (low PA pulse pressure for the RAP)','Low PA pressures: the RV cannot generate pressure','Fluid raises RAP without raising CO']},
-  septic:{name:'Septic / distributive',short:'Vasoplegia, high output',hr:122,ra:6,pawp:9,co:7.8,svr:550,pvr:110,vo2:210,hb:11,sao2:.96,kPA:1,kA:1.1,rr:26,swing:7,ppv:.12,pulsus:.06,fr:.6,ino:.3,ne:1.06,vwave:0,
-    key:['Low SVR with high CI (early hyperdynamic phase)','High SvO₂ from impaired extraction','Wide arterial pulse pressure, low diastolic','Norepinephrine restores SVR and MAP']},
-  pe:{name:'Massive PE',short:'Acute RV pressure overload',hr:124,ra:17,pawp:8,co:2.6,svr:1450,pvr:800,vo2:240,hb:13,sao2:.88,kPA:2.1,kA:1,rr:28,swing:9,ppv:.1,pulsus:.15,fr:-.3,ino:.5,ne:1.08,vwave:0,
-    key:['High RAP, normal/low PAWP','Raised PADP with PADP − PAWP gradient (DPG) > 7','PVR markedly raised; mPAP rarely > 40 acutely','Thrombolysis is the definitive fix; fluid worsens it']},
-  tamp:{name:'Tamponade',short:'Diastolic equalisation',hr:128,ra:18,pawp:18,co:2.6,svr:1450,pvr:110,vo2:230,hb:13,sao2:.97,kPA:1,kA:1,rr:26,swing:8,ppv:.15,pulsus:.42,fr:.35,ino:.05,ne:1.03,vwave:0,tamp:true,
-    key:['RAP ≈ RVEDP ≈ PADP ≈ PAWP (within ~5 mmHg)','Blunted y descent on the RA trace','Pulsus paradoxus on the arterial line','Pericardiocentesis is definitive']},
-  mr:{name:'Acute severe MR',short:'Giant v waves',hr:115,ra:12,pawp:28,co:3.0,svr:1500,pvr:180,vo2:230,hb:13,sao2:.91,kPA:1.6,kA:.9,rr:26,swing:8,ppv:.06,pulsus:.06,fr:-.1,ino:1,ne:.9,vwave:3.2,
-    key:['Giant v waves on the wedge trace','Mean PAWP over-reads LVEDP; read at the a wave','v waves can make the wedge look like PA','Afterload reduction / inotropy helps; vasopressors worsen MR']},
-  pah:{name:'Precapillary PH',short:'Chronic PAH, RV strain',hr:104,ra:14,pawp:10,co:3.4,svr:1400,pvr:960,vo2:240,hb:13,sao2:.92,kPA:3.2,kA:1,rr:22,swing:6,ppv:.06,pulsus:.06,fr:-.25,ino:.6,ne:1.05,vwave:0,
-    key:['mPAP > 20 with PAWP ≤ 15 and PVR > 2 WU','Very high PASP: a hypertrophied RV generates pressure','High TPG and DPG','Pulmonary vasodilators lower PVR']}
-};
-const SCEN_KEYS = Object.keys(SCEN);
+const SCEN = PT.SCEN;
+const SCEN_KEYS = PT.KEYS;
 
 /* ---------- App state ---------- */
 const S = {
-  scen:'normal', iv:{fluid:0, ne:false, dob:false, diur:false, ino:false, peri:false, lysis:false, pace:false},
-  vent:'spont', af:false, damp:'opt', level:0, peep:5, lbbb:false, chb:false, ruptured:false,
+  scen:'normal', ver:-1, ivc:{fluid:0, diur:0},
+  damp:'opt', level:0,
   inserted:15, tip:15, slack:0, balloon:false, wedgeDepth:49.5,
   mode:'free', quiz:null,
   measured:{}, td:[], gas:null, visited:{},
@@ -683,62 +670,22 @@ const S = {
 };
 let DV = null; // derived values
 
-function applyInterventions(base){
-  const p = {...base};
-  const k = S.scen;
-  if (S.iv.peri){ if (k==='tamp'){ Object.assign(p,{ra:7,pawp:10,co:4.8,svr:1200,hr:100,pulsus:.06,ppv:.06,tamp:false,fr:.4}); } }
-  if (S.iv.lysis){ if (k==='pe'){ Object.assign(p,{pvr:260,ra:9,co:4.3,hr:106,kPA:1.6,sao2:.94,fr:.2}); } }
-  for (let i=0;i<S.iv.fluid;i++){
-    const resp = p.fr*Math.pow(.72,i);
-    p.co *= 1 + .13*resp;
-    p.ra += 2 + (resp<0?1.5:0);
-    p.pawp += (k==='pe'||k==='pah'||k==='rv') ? .8 : (2.5 + (p.pawp>18?1.5:0));
-    if (p.tamp) { p.pawp = p.ra; }
-    p.hr -= 4*Math.max(0,resp);
-  }
-  if (S.iv.ne){ p.svr *= (k==='septic'?1.6:1.3); p.co *= p.ne; p.pvr *= 1.05; p.hr += 3; p.pawp += (k==='lv'||k==='mr')?2:.5; if(k==='mr') p.vwave*=1.25; }
-  if (S.iv.dob){ p.co *= 1+.28*p.ino; p.svr *= .85; p.hr += 12; p.pawp = Math.max(3,p.pawp-((k==='lv'||k==='mr')?4:1)); p.ra = Math.max(1,p.ra-(k==='rv'||k==='pe'||k==='pah'?2:.5)); p.vo2*=1.06; if(k==='mr') p.vwave*=.8; }
-  if (S.iv.diur){
-    p.ra = Math.max(1,p.ra-3); p.pawp = Math.max(2,p.pawp-5);
-    p.co *= ({hypo:.82,septic:.86,normal:.92,tamp:.8,lv:1.03,mr:1.04,rv:1.05,pe:1.02,pah:1.04})[k]||1;
-    if (p.tamp) p.pawp = p.ra;
-  }
-  if (S.iv.ino){
-    const f = ({pe:.8,pah:.65,rv:.85})[k]||.92;
-    const before = p.pvr; p.pvr *= f;
-    if (before>300){ p.co *= 1+.15*Math.min(1,(before-300)/600); p.ra = Math.max(2,p.ra-2); }
-  }
-  if (S.chb && !S.iv.pace){ p.hr = 36; p.co *= .55; }
-  else if (S.chb && S.iv.pace){ p.hr = 80; p.co *= .9; }
-  if (S.ruptured){ p.sao2 *= .84; p.co *= .78; p.hr += 18; p.hb -= 1.5; }
-  // PEEP on mechanical ventilation: less venous return, raised measured (not transmural) pressures
-  p.zone3 = true;
-  if (S.vent==='mech'){
-    const dp = S.peep - 5;
-    p.co *= 1 - .015*dp*clamp(p.fr,0,1);
-    const off = .74*.4*dp; p.ra += off; p.pawp += off;
-    if (.74*S.peep > p.pawp - off){ p.zone3 = false; p.pawp = Math.max(p.pawp, .74*S.peep*.85); }
-  }
-  p.hr = clamp(p.hr,30,170);
-  return p;
-}
 function derive(){
-  const b = applyInterventions(SCEN[S.scen]);
-  const sv = b.co/b.hr*1000;
-  const map = b.ra + b.svr*b.co/80;
-  const mpap = b.pawp + b.pvr*b.co/80;
-  const ppPA = Math.max(5, 18*Math.sqrt(sv/70)*b.kPA);
+  const e = PT.eff, p = PT.s, d = PT.derived(e), ox = PT.oxy();
+  const co = d.CO, hr = e.hr, sv = co/hr*1000, ra = d.RAP, pawp = d.PAWP, pvr = e.pvr, svr = e.svri/BSA;
+  const map = d.MAP, mpap = d.mPAP;
+  const ppPA = Math.max(5, 18*Math.sqrt(sv/70)*p.kPA);
   const pad = mpap - ppPA/3, pas = mpap + 2*ppPA/3;
-  const ppA = Math.max(10, 42*(sv/70)*b.kA);
+  const ppA = Math.max(10, 42*(sv/70)*p.kA);
   const sbp = map + 2*ppA/3, dbp = map - ppA/3;
-  const cao2 = 1.34*b.hb*b.sao2*10;               // mL O2 / L
-  const do2 = b.co*cao2;                           // mL/min
-  const er = Math.min(.82, b.vo2/do2);
-  const svo2 = b.sao2*(1-er)*100;
-  DV = {...b, sv, map, mpap, ppPA, pad, pas, ppA, sbp, dbp,
-    rvs: pas + 1.5, rvedp: b.tamp ? b.ra : b.ra + 1,
-    ci: b.co/BSA, svi: sv/BSA, do2, do2i: do2/BSA, er: er*100, svo2,
-    pvrWU: b.pvr/80, tpg: mpap-b.pawp, dpg: pad-b.pawp, papi: (pas-pad)/b.ra, cpo: map*b.co/451, rapawp: b.ra/b.pawp };
+  const do2 = co*1.34*ox.hb*ox.sao2*10;
+  const pulsus = Math.max(.05, p.pulsus*(SCEN[PT.key].p.ppc && e.ppc < 8 ? .15 : 1));
+  DV = { hr, ra, pawp, co, svr, pvr, vo2:p.vo2i*BSA, hb:ox.hb, sao2:ox.sao2, kPA:p.kPA, kA:p.kA, rr:p.rr, swing:p.swing,
+    ppv:PT.dynPPV(), pulsus, vwave:3.2*e.mr, tamp:d.tamp, zone3:d.zone3,
+    sv, map, mpap, ppPA, pad, pas, ppA, sbp, dbp,
+    rvs: pas + 1.5, rvedp: d.tamp ? ra : ra + 1,
+    ci: d.CI, svi: sv/BSA, do2, do2i: do2/BSA, er: ox.er*100, svo2: ox.svo2,
+    pvrWU: pvr/80, tpg: mpap-pawp, dpg: pad-pawp, papi: (pas-pad)/ra, cpo: map*co/451, rapawp: ra/pawp };
   return DV;
 }
 
@@ -770,12 +717,12 @@ function pvcProb(){
 }
 function newBeat(t0){
   const base = 60/DV.hr, prev = ENG.beats[ENG.beats.length-1];
-  let type = S.af ? 'af' : 'sinus', rr = base, sv = 1;
-  if (S.lbbb && !S.chb && !S.iv.pace && zone()==='rv' && Math.random() < .03){ S.chb = true; setTimeout(() => window.dispatchEvent(new Event('chb')), 0); }
-  if (S.chb && !S.iv.pace){ type = 'esc'; }
+  let type = (PT.s.rhythm==='af') ? 'af' : 'sinus', rr = base, sv = 1;
+  if ((PT.s.rhythm==='lbbb') && !PT.s.chb && !PT.s.pace && zone()==='rv' && Math.random() < .03){ PT.s.chb = true; setTimeout(() => window.dispatchEvent(new Event('chb')), 0); }
+  if (PT.s.chb && !PT.s.pace){ type = 'esc'; }
   else if (prev && prev.type==='pvc'){ rr = base*1.45; sv = 1.12; }
   else if (Math.random() < pvcProb()){ type = 'pvc'; rr = base*.62; sv = .45; }
-  else if (S.af){ rr = base*(.62+Math.random()*.76); sv = .72 + .28*clamp((rr/base-.62)/.76,0,1); }
+  else if ((PT.s.rhythm==='af')){ rr = base*(.62+Math.random()*.76); sv = .72 + .28*clamp((rr/base-.62)/.76,0,1); }
   const qr = type==='pvc' ? .05 : clamp(.1+.1*base,.13,.2);
   const ts = qr + .045;
   const te = qr + .34*Math.sqrt(base) - .03;
@@ -797,7 +744,7 @@ const G = (x,c,w,a) => a*Math.exp(-Math.pow((x-c)/w,2));
 
 function ecgBeat(b,τ){
   if (b.type==='esc') return G(τ,b.qr+.03,.045,-.9) + G(τ,b.qr+.11,.05,.5) + G(τ,b.te,.07,.5);
-  if (S.lbbb && b.type!=='pvc') return (b.type==='sinus'?G(τ,b.pc,.024,.13):0) + G(τ,b.qr,.03,.85) + G(τ,b.qr+.05,.03,.75) + G(τ,b.te-.06,.06,-.35);
+  if ((PT.s.rhythm==='lbbb') && b.type!=='pvc') return (b.type==='sinus'?G(τ,b.pc,.024,.13):0) + G(τ,b.qr,.03,.85) + G(τ,b.qr+.05,.03,.75) + G(τ,b.te-.06,.06,-.35);
   if (b.type==='pvc') return G(τ,b.qr+.02,.03,-1.25) + G(τ,b.qr+.085,.04,.55) + G(τ,b.te-.04,.06,.45);
   let v = 0;
   if (b.type==='sinus') v += G(τ,b.pc,.024,.13);
@@ -807,7 +754,7 @@ function ecgBeat(b,τ){
 function ecg(t){
   const [b,p] = beatAt(t); const τ = t-b.t0;
   let v = ecgBeat(b,τ) + (p!==b ? ecgBeat(p, τ+p.rr) : 0);
-  if (S.af) v += .045*Math.sin(2*Math.PI*6.7*t) + .03*Math.sin(2*Math.PI*10.9*t+1.3);
+  if ((PT.s.rhythm==='af')) v += .045*Math.sin(2*Math.PI*6.7*t) + .03*Math.sin(2*Math.PI*10.9*t+1.3);
   return v + (Math.random()-.5)*.015;
 }
 // atrial waveform (RA or PAWP). delay = transmission delay; damp = width multiplier
@@ -877,10 +824,10 @@ function tipTrue(t){
   }
   return 0;
 }
-function itp(t){ const s = respShape(respPhase(t)); return S.vent==='mech' ? DV.swing*.8*s : -DV.swing*s; }
+function itp(t){ const s = respShape(respPhase(t)); return PT.s.vent==='cmv' ? DV.swing*.8*s : -DV.swing*s; }
 function svMod(t){
   const ph = respPhase(t);
-  return S.vent==='mech' ? 1 + DV.ppv*.5*Math.cos(2*Math.PI*(ph-.2)) : 1 - DV.pulsus*respShape(ph);
+  return PT.s.vent==='cmv' ? 1 + DV.ppv*.5*Math.cos(2*Math.PI*(ph-.2)) : 1 - DV.pulsus*respShape(ph);
 }
 const DAMP = { opt:{fn:22,z:.6}, over:{fn:4,z:1.6}, under:{fn:11,z:.09} };
 function sampleAll(t, dt){
@@ -895,7 +842,7 @@ function sampleAll(t, dt){
   const cvp = atrial(t, DV.ra, 'ra') + I + off + (Math.random()-.5)*.2;
   const art = arterialLike(t, DV.dbp, DV.ppA, .055, .2, .1, svMod(t)) + I*.4 + off;
   const ph = respPhase(t);
-  const resp = S.vent==='mech' ? 5 + 17*respShape(ph) : respShape(ph);
+  const resp = PT.s.vent==='cmv' ? 5 + 17*respShape(ph) : respShape(ph);
   return { ecg: ecg(t), art, pa, cvp, resp, ph };
 }
 
@@ -945,7 +892,7 @@ function updateScales(){
   setScale(TR.cvp, 0, cvpHi, $('sc-cvp'), [cvpHi/3, 2*cvpHi/3]);
   const aHi = DV.sbp > 140 ? 200 : 160;
   setScale(TR.abp, 0, aHi, $('sc-abp'), [aHi/4, aHi/2, 3*aHi/4]);
-  setScale(TR.resp, S.vent==='mech'? 0 : -.3, S.vent==='mech'? 30 : 1.3, null, []);
+  setScale(TR.resp, PT.s.vent==='cmv'? 0 : -.3, PT.s.vent==='cmv'? 30 : 1.3, null, []);
 }
 function pushBuf(arr, v, n){ arr.push(v); if (arr.length > n) arr.shift(); }
 function monitorStep(simT){
@@ -1214,7 +1161,7 @@ window.dispatchEvent(new Event('three-ready'));
 <!-- ======================= CONTROLLER ======================= -->
 <script>
 'use strict';
-derive();
+S.ver = PT.version; derive();
 let simT = 0, lastReal = performance.now();
 const three = () => window.__three;
 
@@ -1342,7 +1289,7 @@ $('tdBtn').onclick = () => {
   const tau = clamp(1.6*5.4/co, .9, 4.5);           // low CO → wider, taller curve (bigger area)
   S.td.push({co, amp:clamp(.55*5.4/co,.25,1), tau}); if (S.td.length > 3) S.td.shift();
   const avg = S.td.reduce((a,b)=>a+b.co,0)/S.td.length;
-  S.measured.co = S.td.length >= 1; S.tdAvg = avg;
+  S.measured.co = S.td.length >= 1; S.tdAvg = avg; PT.meas.pacCI = avg/BSA;
   const spread = S.td.length>1 ? (Math.max(...S.td.map(t=>t.co))-Math.min(...S.td.map(t=>t.co)))/avg*100 : 0;
   $('tdRes').innerHTML = `<b>${avg.toFixed(1)}</b>L/min · ${S.td.length}/3 inj${S.td.length===3 ? `<br>spread ${spread.toFixed(0)}%${spread>10?' — repeat':''}` : ''}`;
   log(`Thermodilution #${S.td.length}: ${co.toFixed(2)} L/min (10 mL iced saline, end-expiration).${tr<1&&S.td.length===1?' Significant TR can make thermodilution under-read.':''}`);
@@ -1365,74 +1312,94 @@ function buildScenarios(){
   const L = $('scenList'); L.innerHTML = '';
   if (S.mode==='quiz'){ L.hidden = true; return; } L.hidden = false;
   SCEN_KEYS.forEach(k => {
-    const b = document.createElement('button'); b.className = 'scen'; b.setAttribute('aria-pressed', k===S.scen);
+    const b = document.createElement('button'); b.className = 'scen'; b.setAttribute('aria-pressed', k===S.scen && !PT.quiz);
     b.innerHTML = `<strong>${SCEN[k].name}</strong><span>${SCEN[k].short}</span>`;
     b.onclick = () => { setScenario(k); log(`Profile: ${SCEN[k].name}.`); };
     L.append(b);
   });
 }
 function setScenario(k){
-  S.scen = k; S.iv = {fluid:0,ne:false,dob:false,diur:false,ino:false,peri:false,lysis:false,pace:false}; S.chb = false; S.ruptured = false;
+  PT.quiz = false; PT.load(k); swanSync(true);
+}
+function swanSync(force){
+  if (!force && S.ver === PT.version) { syncSelects(); buildIV(); return; }
+  S.ver = PT.version; S.scen = PT.key; S.ivc = {fluid:0, diur:0};
   S.td = []; S.tdAvg = null; S.gas = null; S.measured = {}; S.wedgeVal = null;
   S.wedgeDepth = 48 + Math.random()*3;
-  derive(); buildScenarios(); buildIV(); drawTD(); $('tdRes').innerHTML = '<b>--</b>No injections yet'; render(true);
+  derive(); syncSelects(); buildScenarios(); buildIV(); drawTD(); $('tdRes').innerHTML = '<b>--</b>No injections yet'; render(true);
 }
+function syncSelects(){
+  const p = PT.s;
+  $('setVent').value = p.vent==='cmv' ? 'mech' : 'spont';
+  $('setRhythm').value = p.rhythm;
+  const pe = $('setPeep'); if (![...pe.options].some(o => +o.value === p.peep)) pe.add(new Option(`${p.peep} cmH₂O`, p.peep)); pe.value = String(p.peep);
+  $('respLabel').textContent = p.vent==='cmv' ? 'Paw' : 'RESP';
+  $('rhythmTxt').textContent = p.rhythm==='af' ? 'AF' : p.rhythm==='lbbb' ? 'LBBB' : 'sinus';
+}
+// interventions act on the shared patient: the PiCCO and FloTrac tabs see the same drugs and fluid
 const IVS = [
-  ['fluid','Fluid 500 mL','count'],['ne','Norepinephrine','tog'],['dob','Dobutamine','tog'],['diur','Diuretic','tog'],
-  ['ino','Inhaled NO','tog'],['peri','Pericardiocentesis','tog'],['lysis','Thrombolysis','tog'],['pace','Transcutaneous pacing','tog']
+  ['fluid','Fluid 500 mL','act'],['diur','Diuretic (−1 L)','act'],['ne','Norepinephrine 0.2','tog'],['dob','Dobutamine 7.5','tog'],
+  ['ino','Inhaled NO','tog'],['peri','Pericardiocentesis','act'],['lysis','Thrombolysis','tog'],['pace','Transcutaneous pacing','tog']
 ];
+const ivOn = k => ({ne:PT.s.norad>0, dob:PT.s.dobu>0, ino:PT.s.ino, lysis:PT.s.lysis, pace:PT.s.pace, peri:SCEN[PT.key].p.ppc>0 && PT.s.ppc<8})[k];
 function buildIV(){
   const g = $('ivGrid'); g.innerHTML = '';
   IVS.forEach(([k,label,type]) => {
-    const b = document.createElement('button'); b.className = 'btn iv' + ((type==='count'?S.iv[k]>0:S.iv[k])?' on':'');
-    b.innerHTML = `<span>${label}</span><span class="tag">${type==='count' ? (S.iv[k] ? '×'+S.iv[k] : '+') : (S.iv[k] ? 'ON' : '')}</span>`;
+    const n = S.ivc[k]||0, on = type==='tog' ? ivOn(k) : (k==='peri' ? ivOn(k) : n>0);
+    const b = document.createElement('button'); b.className = 'btn iv' + (on?' on':'');
+    b.innerHTML = `<span>${label}</span><span class="tag">${type==='tog' ? (on ? 'ON' : '') : k==='peri' ? (on ? 'done' : '') : (n ? '×'+n : '+')}</span>`;
     b.onclick = () => {
-      const before = {...DV};
-      if (type==='count'){ S.iv[k] = S.iv[k] >= 4 ? 0 : S.iv[k]+1; }
-      else S.iv[k] = !S.iv[k];
-      derive();
-      if (k==='pace' && !S.chb){ if (S.iv[k]) log('Pacing pads on, standby: no heart block at present.', ''); }
-      else if ((k==='peri' && S.scen!=='tamp') || (k==='lysis' && S.scen!=='pe')){ if (S.iv[k]) log(`${label}: not indicated in this patient — no haemodynamic effect.`, 'w'); }
+      const before = PT.derived(PT.targets());
+      if (k==='fluid'){ PT.fluid(500); S.ivc.fluid = n+1; }
+      else if (k==='diur'){ PT.removeFluid(1000); S.ivc.diur = n+1; }
+      else if (k==='ne') PT.s.norad = PT.s.norad>0 ? 0 : .2;
+      else if (k==='dob') PT.s.dobu = PT.s.dobu>0 ? 0 : 7.5;
+      else if (k==='ino') PT.s.ino = !PT.s.ino;
+      else if (k==='lysis') PT.s.lysis = !PT.s.lysis;
+      else if (k==='pace') PT.s.pace = !PT.s.pace;
+      else if (k==='peri'){ if (!(SCEN[PT.key].p.ppc>0)){ log('Pericardiocentesis: no effusion in this patient, not indicated.', 'w'); return; } PT.s.ppc = 2; }
+      if (k==='pace' && !PT.s.chb){ if (PT.s.pace) log('Pacing pads on, standby: no heart block at present.', ''); }
+      else if (k==='lysis' && PT.s.pvr < 300){ if (PT.s.lysis) log('Thrombolysis: no thrombotic PVR rise in this patient, bleeding risk without benefit.', 'w'); }
       else {
-        const dCO = DV.co - before.co, dMAP = DV.map - before.map;
-        const lab = type==='count' ? (S.iv[k] ? `${label} #${S.iv[k]}` : 'Fluid boluses reset') : `${label} ${S.iv[k]?'started':'stopped'}`;
-        log(`${lab}: CO ${dCO>=0?'+':''}${dCO.toFixed(1)}, MAP ${dMAP>=0?'+':''}${dMAP.toFixed(0)}, RAP ${DV.ra.toFixed(0)}, PAWP ${DV.pawp.toFixed(0)}.`, (k==='fluid' && dCO < .05 && S.iv.fluid) ? 'w' : '');
+        const after = PT.derived(PT.targets()), dCO = after.CO - before.CO, dMAP = after.MAP - before.MAP;
+        const lab = type==='tog' ? `${label} ${ivOn(k)?'started':'stopped'}` : `${label}${S.ivc[k] ? ' #'+S.ivc[k] : ''}`;
+        log(`${lab}: expected CO ${dCO>=0?'+':''}${dCO.toFixed(1)}, MAP ${dMAP>=0?'+':''}${dMAP.toFixed(0)}, RAP ${after.RAP.toFixed(0)}, PAWP ${after.PAWP.toFixed(0)} (over the next few seconds).`, (k==='fluid' && dCO < .15) ? 'w' : '');
       }
       buildIV(); render(true);
     };
     g.append(b);
   });
   const c = document.createElement('button'); c.className = 'btn iv danger'; c.innerHTML = '<span>Clear all</span><span class="tag"></span>';
-  c.onclick = () => { S.iv = {fluid:0,ne:false,dob:false,diur:false,ino:false,peri:false,lysis:false,pace:false}; S.chb = false; S.ruptured = false; derive(); buildIV(); render(true); log('Interventions cleared.'); };
+  c.onclick = () => { PT.resetInterventions(); S.ivc = {fluid:0, diur:0}; buildIV(); render(true); log('Interventions cleared: back to the baseline patient.'); };
   g.append(c);
 }
-$('setVent').onchange = e => { S.vent = e.target.value; derive(); $('respLabel').textContent = S.vent==='mech' ? 'Paw' : 'RESP'; log(S.vent==='mech' ? 'Mechanical ventilation: intrathoracic pressure rises on inspiration — read at end-expiration (trough-to-plateau before inspiration).' : 'Spontaneous breathing: pressures fall on inspiration — read at end-expiration, just before the inspiratory dip.'); render(true); };
-$('setRhythm').onchange = e => { const v = e.target.value; S.af = v==='af'; S.lbbb = v==='lbbb'; $('rhythmTxt').textContent = S.af ? 'AF' : S.lbbb ? 'LBBB' : 'sinus';
-  log(S.af ? 'AF: a waves disappear from RA and wedge traces; irregular RR changes beat-to-beat stroke volume.' : S.lbbb ? 'Pre-existing LBBB: relative contraindication. The catheter can cause RBBB in the RV and so complete heart block. Have transcutaneous pacing ready and cross the RV quickly.' : 'Sinus rhythm restored.', S.lbbb ? 'w' : ''); };
-$('setPeep').onchange = e => { S.peep = +e.target.value; derive(); render(true);
-  log(S.vent!=='mech' ? 'PEEP applies to mechanical ventilation: switch ventilation to mechanical.' : S.peep >= 10 ? `PEEP ${S.peep}: measured RAP/PAWP rise without a rise in transmural filling; venous return falls. If PEEP (×0.74) exceeds PAWP the tip may be outside West zone 3.` : 'PEEP 5 cmH₂O.', S.peep>=10 ? 'w' : ''); };
+$('setVent').onchange = e => { PT.s.vent = e.target.value==='mech' ? 'cmv' : 'spont'; derive(); $('respLabel').textContent = PT.s.vent==='cmv' ? 'Paw' : 'RESP'; log(PT.s.vent==='cmv' ? 'Mechanical ventilation: intrathoracic pressure rises on inspiration — read at end-expiration (trough-to-plateau before inspiration).' : 'Spontaneous breathing: pressures fall on inspiration — read at end-expiration, just before the inspiratory dip.'); render(true); };
+$('setRhythm').onchange = e => { const v = e.target.value; PT.s.rhythm = v; $('rhythmTxt').textContent = (PT.s.rhythm==='af') ? 'AF' : (PT.s.rhythm==='lbbb') ? 'LBBB' : 'sinus';
+  log((PT.s.rhythm==='af') ? 'AF: a waves disappear from RA and wedge traces; irregular RR changes beat-to-beat stroke volume.' : (PT.s.rhythm==='lbbb') ? 'Pre-existing LBBB: relative contraindication. The catheter can cause RBBB in the RV and so complete heart block. Have transcutaneous pacing ready and cross the RV quickly.' : 'Sinus rhythm restored.', (PT.s.rhythm==='lbbb') ? 'w' : ''); };
+$('setPeep').onchange = e => { PT.s.peep = +e.target.value; derive(); render(true);
+  log(PT.s.vent!=='cmv' ? 'PEEP applies to mechanical ventilation: switch ventilation to mechanical.' : PT.s.peep >= 10 ? `PEEP ${PT.s.peep}: measured RAP/PAWP rise without a rise in transmural filling; venous return falls. If PEEP (×0.74) exceeds PAWP the tip may be outside West zone 3.` : 'PEEP 5 cmH₂O.', PT.s.peep>=10 ? 'w' : ''); };
 window.addEventListener('chb', () => { derive(); buildIV(); render(true); alertMsg('Complete heart block: catheter-induced RBBB on top of LBBB. Start transcutaneous pacing (Interventions), withdraw to the RA, get help.', 'crit', 9000); log('Complete heart block during RV passage (LBBB + catheter RBBB). Escape rhythm ~36/min.', 'c'); });
 $('setDamp').onchange = e => { S.damp = e.target.value; log(`Transducer: ${e.target.selectedOptions[0].text}. Run a fast-flush test to confirm.`, S.damp==='opt'?'':'w'); };
 $('setLevel').onchange = e => { S.level = +e.target.value; log(S.level ? `Transducer ${Math.abs(S.level)} cm ${S.level>0?'above':'below'} the phlebostatic axis: every pressure reads ~${(Math.abs(S.level)*.74).toFixed(0)} mmHg ${S.level>0?'low':'high'}.` : 'Transducer levelled at the phlebostatic axis (4th ICS, mid-axillary).', S.level?'w':''); render(true); };
 
 /* ---------- modes ---------- */
 function setMode(m){
-  S.mode = m; $('modeFree').setAttribute('aria-pressed', m==='free'); $('modeQuiz').setAttribute('aria-pressed', m==='quiz');
+  S.mode = m; if (m==='free') PT.quiz = false; $('modeFree').setAttribute('aria-pressed', m==='free'); $('modeQuiz').setAttribute('aria-pressed', m==='quiz');
   $('quizBox').hidden = m!=='quiz';
   $('patientHead').textContent = m==='quiz' ? 'Unknown patient' : 'Patient';
   $('patientHint').textContent = m==='quiz' ? 'measure, then diagnose' : 'choose a haemodynamic profile';
   if (m==='quiz') newCase(); else { buildScenarios(); render(true); }
 }
 function newCase(){
-  const pool = SCEN_KEYS; const k = pool[Math.floor(Math.random()*pool.length)];
-  setScenario(k); S.visited = {}; S.quiz = {n:(S.quiz?.n||0)+1, answered:false};
+  const pool = SCEN_KEYS.filter(k => k!=='traps' && k!==S.scen); const k = pool[Math.floor(Math.random()*pool.length)];
+  setScenario(k); PT.quiz = true; S.visited = {}; S.quiz = {n:(S.quiz?.n||0)+1, answered:false};
   toggleBalloon(false); S.slack = 0; setInserted(15); S.tip = 15; three()?.rebuildCatheter();
   $('verdict').innerHTML = ''; $('patientHead').textContent = `Unknown patient #${S.quiz.n}`;
   log(`New unknown patient #${S.quiz.n}. Float the catheter and measure.`, 'g');
 }
 $('modeFree').onclick = () => setMode('free'); $('modeQuiz').onclick = () => setMode('quiz');
 $('newCase').onclick = newCase;
-$('dxSel').innerHTML = SCEN_KEYS.map(k => `<option value="${k}">${SCEN[k].name}</option>`).join('');
+$('dxSel').innerHTML = SCEN_KEYS.filter(k => k!=='traps').map(k => `<option value="${k}">${SCEN[k].name}</option>`).join('');
 $('dxSubmit').onclick = () => {
   const g = $('dxSel').value, k = S.scen, ok = g===k;
   if (S.quiz) S.quiz.answered = true;
@@ -1441,7 +1408,7 @@ $('dxSubmit').onclick = () => {
   log(`Diagnosis submitted: ${SCEN[g].name} — ${ok?'correct':'answer was '+SCEN[k].name}.`, ok?'g':'c');
   render(true);
 };
-$('resetAll').onclick = () => { S.chb = false; S.ruptured = false; stopAuto(); toggleBalloon(false); S.slack = 0; S.tip = 15; S.inserted = 15; $('ruler').value = 15; setScenario(S.mode==='quiz'?S.scen:'normal'); three()?.rebuildCatheter(); log('Reset.'); };
+$('resetAll').onclick = () => { PT.s.chb = false; PT.s.ruptured = false; stopAuto(); toggleBalloon(false); S.slack = 0; S.tip = 15; S.inserted = 15; $('ruler').value = 15; setScenario(S.mode==='quiz'?S.scen:'normal'); three()?.rebuildCatheter(); log('Reset.'); };
 
 /* ---------- teaching text ---------- */
 const ZONE_TEACH = {
@@ -1471,11 +1438,11 @@ function interp(){
   if (d.vwave > 1) add('Giant v waves on wedge — read PAWP at the a wave / pre-v point.', 'crit');
   if (d.cpo < .6) add(`CPO ${d.cpo.toFixed(2)} W < 0.6 — predicts mortality in cardiogenic shock.`, 'crit');
   if (d.svo2 < 60) add(`SvO₂ ${d.svo2.toFixed(0)}% — oxygen delivery insufficient for demand.`, 'crit'); else if (d.svo2 > 78) add(`SvO₂ ${d.svo2.toFixed(0)}% — high: impaired extraction or shunt.`, 'warn');
-  if (S.vent==='mech' && d.ppv > .15) add('Large arterial pulse-pressure variation on the ventilator — likely fluid responsive.', 'ok');
-  if (S.vent==='mech' && S.peep >= 10) add(`PEEP ${S.peep}: measured RAP and PAWP over-read transmural filling by ~${(.74*.4*(S.peep-5)).toFixed(0)} mmHg.`, 'warn');
+  if (PT.s.vent==='cmv' && d.ppv > .15) add('Large arterial pulse-pressure variation on the ventilator — likely fluid responsive.', 'ok');
+  if (PT.s.vent==='cmv' && PT.s.peep >= 10) add(`PEEP ${PT.s.peep}: measured RAP and PAWP over-read transmural filling by ~${(.74*.4*(PT.s.peep-5)).toFixed(0)} mmHg.`, 'warn');
   if (d.zone3 === false) add('PAWP may reflect alveolar pressure (non-zone 3): PEEP exceeds left atrial pressure. Check that PAWP respiratory swing is not larger than the PA diastolic swing; confirm tip below the LA on a lateral film.', 'crit');
-  if (S.chb) add(S.iv.pace ? 'Complete heart block: paced at 80/min.' : 'Complete heart block with slow escape rhythm: pace now.', 'crit');
-  if (S.ruptured) add('PA rupture: haemoptysis and hypoxaemia. Balloon tamponade, lung isolation, surgery / IR.', 'crit');
+  if (PT.s.chb) add(PT.s.pace ? 'Complete heart block: paced at 80/min.' : 'Complete heart block with slow escape rhythm: pace now.', 'crit');
+  if (PT.s.ruptured) add('PA rupture: haemoptysis and hypoxaemia. Balloon tamponade, lung isolation, surgery / IR.', 'crit');
   return out.join('');
 }
 
@@ -1575,7 +1542,7 @@ function numerics(){
   }
   $('nSvO2').textContent = (S.mode==='quiz' && !S.measured.svo2) ? '--' : ((S.gas ?? DV.svo2)).toFixed(0);
   $('nCO').textContent = S.tdAvg ? S.tdAvg.toFixed(1) : (S.mode==='quiz' ? '--' : DV.co.toFixed(1));
-  $('nRR').textContent = `RR ${Math.round(DV.rr)} · ${S.vent==='mech'?'VENT':'SPONT'}`;
+  $('nRR').textContent = `RR ${Math.round(DV.rr)} · ${PT.s.vent==='cmv'?'VENT':'SPONT'}`;
 }
 
 /* ---------- zone events ---------- */
@@ -1592,8 +1559,8 @@ function zoneEvents(dt){
     if (z==='pa') S.measured.pa = true;
     render(true);
   }
-  if (z==='over' && S.overStart && simT - S.overStart > 6 && !S.ruptured){
-    S.ruptured = true; derive(); render(true);
+  if (z==='over' && S.overStart && simT - S.overStart > 6 && !PT.s.ruptured){
+    PT.s.ruptured = true; derive(); render(true);
     alertMsg('PA rupture: massive haemoptysis. Leave the catheter in, re-inflate the balloon to tamponade, bleeding side down, isolate the lung (DLT / bronchial blocker), call thoracic surgery / IR.', 'crit', 12000);
     log('PA RUPTURE after sustained over-wedge: haemoptysis, desaturation, hypotension.', 'c');
   }
@@ -1609,6 +1576,7 @@ function loop(now){
   if (window.APPVIEW !== 'swan'){ lastReal = now; requestAnimationFrame(loop); return; }
   const dtReal = Math.min(.1, (now - lastReal)/1000); lastReal = now;
   simT += dtReal; ENG.t = simT;
+  PT.advance(dtReal); derive();
   if (holdDir) setInserted(S.inserted + holdDir*dtReal*5);
   autoTick(dtReal);
   monitorStep(simT);
@@ -1652,62 +1620,17 @@ const col=n=>CSS.getPropertyValue(n).trim();
 const C={art:col('--art'),picco:col('--picco'),flo:col('--flo'),tru:col('--true'),grid:col('--grid'),line:col('--line'),muted:col('--muted'),dim:col('--dim'),fg:col('--fg'),warn:col('--warn'),bg:col('--bg'),panel:col('--panel')};
 
 const BSA=1.9, PBW=70, FS=250, DT=1/FS, RESP=3.75, ALPHA=1-Math.exp(-DT/4);
-const sviFn=(G,c)=>58*c*(1-Math.exp(-Math.max(0,G-250)/280));
+const sviFn=G=>PT.sviAt(G);
 const comp=m=>1.6*Math.exp(-0.012*(m-85));
+const SCEN=PT.SCEN;
 
-const BASE={vol:720,contr:1,svri:1900,hr:78,evlwi:6,rhythm:'sinus',vent:'cmv',tv:8,chest:'closed',line:'ok',norad:0,dobu:0,plr:false,eeo:false,hb:12,sao2:.98,vo2i:130,ei:0,lac0:1,peep:5};
-const SCEN={
-  base:{name:'Post-op baseline',key:["CI, GEDVI, EVLWI and ScvO₂ normal", "SVV low on 8 mL/kg: not fluid responsive", "No intervention needed"],p:{},
-    v:'62-year-old man after elective colectomy. Sedated, volume-controlled ventilation at 8 mL/kg, sinus rhythm. Haemodynamically stable.',
-    t:'Read the thermodilution series and check the spread between boluses. Switch the line to overdamped and watch PCCI fall until you recalibrate.',
-    ft:'Read CI, SV and SVV. Switch the line to overdamped and watch SV fall, then run a fast-flush test.'},
-  haem:{name:'Haemorrhage',key:["Low CI with low GEDVI: preload deficit", "High SVV/PPV on controlled ventilation", "Low ScvO₂; volume (blood) raises CI"],p:{vol:400,contr:1.05,svri:2050,hr:112,evlwi:5,hb:8,lac0:1.6},
-    v:'45-year-old man, 2 h after trauma laparotomy for splenic injury. Drain output rising. Sedated and ventilated at 8 mL/kg.',
-    t:'Note the high SVV and low GEDVI. Give 500 mL twice and follow CI, SVV and the Starling position.',
-    ft:'SVV is high on controlled ventilation at 8 mL/kg. Give 500 mL twice and watch SVV fall as CI rises.'},
-  sepsis:{name:'Septic shock + ARDS',key:["High CI, low SVRI, MAP < 65: vasoplegia", "EVLWI high with PVPI > 3: permeability oedema", "High ScvO₂ with raised lactate: extraction defect", "Norepinephrine first; prove responsiveness (PLR) before fluid"],p:{vol:590,contr:.85,svri:950,hr:118,evlwi:17,tv:6,hb:10,sao2:.94,vo2i:150,ei:.35,lac0:3.2,peep:12},
-    v:'58-year-old woman with faecal peritonitis and ARDS. Lung-protective ventilation at 6 mL/kg. Warm peripheries, MAP in the 50s.',
-    t:'SVV is falsely low at 6 mL/kg: run a PLR. EVLWI and PVPI show permeability oedema. Start norepinephrine, then check whether PiCCO asks for recalibration.',
-    ft:'Low SVR: FloTrac under-reads CO here (reveal true physiology). SVV is unreliable at 6 mL/kg, so run a PLR. Then start norepinephrine.'},
-  cardio:{name:'Cardiogenic shock',key:["Low CI, high GEDVI, low GEF/CFI: pump failure", "EVLWI high with PVPI < 3: hydrostatic oedema", "Low ScvO₂ and raised lactate: inotrope, not fluid"],p:{vol:980,contr:.3,svri:2400,hr:100,evlwi:13,hb:12,sao2:.93,vo2i:120,peep:8},
-    v:'71-year-old man with anterior STEMI after PCI. Cool peripheries, rising lactate, crackles to the mid-zones.',
-    t:'GEDVI is high and GEF low: fluid will not help. Add dobutamine, then remove 500 mL and watch EVLWI.',
-    ft:'Low CI with low SVV and high SVR: fluid will not help. Add dobutamine and watch CI and SVR.'},
-  overload:{name:'Fluid overload',key:["High GEDVI and EVLWI with PVPI < 3", "Adequate CI: de-resuscitate when stable", "FloTrac alone cannot see the lung water"],p:{vol:1050,contr:.9,svri:1400,hr:88,evlwi:16,hb:9,sao2:.91,lac0:1.2,peep:10},
-    v:'66-year-old woman on day 4 of septic shock, +9 L balance, worsening oxygenation on the ventilator.',
-    t:'EVLWI is high with PVPI below 3 (hydrostatic). Compare with the septic ARDS case, where PVPI is above 3.',
-    ft:'FloTrac cannot see lung water: CI and SVV look acceptable while EVLWI is 16. Reveal true physiology to see what you are missing.'},
-  traps:{name:'Validity traps',key:["AF and spontaneous efforts: SVV/PPV invalid", "PLR shows fluid responsiveness despite uninterpretable SVV", "Raised EVLWI with PVPI around 3"],p:{vol:560,contr:.9,svri:1500,hr:120,evlwi:12,rhythm:'af',vent:'spont',tv:6,hb:11,sao2:.93,vo2i:140,lac0:1.5,peep:10},
-    v:'52-year-old man with pneumonia-ARDS, new atrial fibrillation, light sedation with triggered breaths.',
-    t:'SVV and PPV are meaningless here. Use a PLR with real-time pulse contour CI to decide on fluid.',
-    ft:'AF and spontaneous breaths make SVV meaningless. Run a PLR and read the change in FloTrac CI.'}
-};
-
-let s, eff, simT=0, beat=null, prevRR=.8, breath={start:0,dur:3.5,amp:1};
+let s=PT.s, eff=PT.eff, labVer=-1, simT=0, beat=null, prevRR=.8, breath={start:0,dur:3.5,amp:1};
 let beats=[], fy=80, fv=0, lastY=80, flushUntil=-10, flushMark=-10;
 const artBuf=new Float32Array(FS*6).fill(NaN); let artW=0;
-let picco={}, flo={}, td={temp:'cold',vol:15,site:'jug',series:[],curves:[],anim:null,mean:null,lastT:-1}, cal=null, lac=1, eeoUntil=-1;
+let picco={}, flo={}, td={temp:'cold',vol:15,site:'jug',series:[],curves:[],anim:null,mean:null,lastT:-1}, cal=null, eeoUntil=-1;
 let trend=[], events=[], pending=[], logRows=[], running=true, scenKey='sepsis', lastEventT=-1, mode='both', quiz=null;
 
-function targets(){
-  const baro=(eff&&s.map0)?clamp(.35*(s.map0-derived(eff).MAP),-12,25):0;   // baroreflex: HR follows MAP
-  return {G:s.vol+160*Math.min(s.norad,.6)+(s.plr?110:0)+(s.eeo&&s.vent==='cmv'?30:0)-(s.vent==='cmv'?4*(s.peep-5):0),
-    c:s.contr*(1+.045*s.dobu)*(1+.15*Math.min(s.norad,.5)),
-    hr:s.hr+1.4*s.dobu+baro,
-    svri:s.svri*(1+1.6*s.norad)*(1-.012*s.dobu),
-    evlwi:s.evlwi};
-}
-function derived(e){
-  const SVI=sviFn(e.G,e.c), CI=SVI*e.hr/1000;
-  const CVP=clamp(1+(e.G-450)/45+7*Math.max(0,1-e.c)+(s&&s.vent==='cmv'?.3*(s.peep-5):0),1,28);
-  return {SVI,CI,CVP,MAP:CI*e.svri/80+CVP};
-}
-function radGrad(){return clamp((1500-s.svri)/800,0,1)*(3+14*Math.min(s.norad,.6));}   // femoral-radial MAP gradient
-function oxy(){
-  const d=derived(eff), do2i=d.CI*1.34*s.hb*s.sao2*10, er=clamp(s.vo2i/do2i*(1-s.ei),.1,.75), svo2=s.sao2*(1-er)*100;
-  const shock=d.MAP<65||d.CI<2.5;
-  return {do2i,svo2,scv:clamp(svo2+(shock?6:-2),20,95),lacT:s.lac0+Math.max(0,330-do2i)/40+Math.max(0,65-d.MAP)/8};
-}
+const targets=PT.targets, derived=PT.derived, radGrad=PT.radGrad, oxy=PT.oxy;
 function respSwing(t){
   if(s.eeo&&s.vent==='cmv')return 0;
   if(s.vent==='cmv'){const dG=9*s.tv*(s.chest==='open'?.3:1);return dG/2*Math.sin(2*Math.PI*t/RESP);}
@@ -1743,7 +1666,7 @@ function finishBeat(b){
 }
 const lineP=()=>s.line==='ok'?[24,.65]:s.line==='over'?[7,1.3]:[12,.14];
 function step(){
-  const tg=targets(); for(const k in tg) eff[k]+=(tg[k]-eff[k])*ALPHA;
+  PT.advance(DT);
   if(!beat||beat.i>=beat.p.length){if(beat)finishBeat(beat);makeBeat();}
   let u=beat.p[beat.i++];
   if(simT<flushUntil){u=300;beat.flush=true;} else if(simT<flushUntil+.7) beat.flush=true;
@@ -1869,6 +1792,8 @@ function renderTiles(){
   setTile('f_svr',flo.svr);setTile('f_svri',flo.svri);setTile('f_map',flo.map);
   const m=td.mean||{}; setTile('t_ci',m.ci);setTile('t_gedvi',m.gedvi);setTile('t_itbvi',m.itbvi);setTile('t_evlwi',m.evlwi);
   setTile('t_pvpi',m.pvpi);setTile('t_gef',m.gef);setTile('t_cfi',m.cfi);setTile('t_cpi',m.cpi);
+  {const truth=$('showTruth').checked&&!(quiz&&!quiz.answered), f=v=>v==null||!isFinite(v)?'—':v.toFixed(2);
+   $('coCmp').innerHTML=`Same patient, cardiac index by method: PAC thermodilution <b>${f(PT.meas.pacCI)}</b> · PiCCO thermodilution <b>${f(td.mean?.ci)}</b> · PiCCO pulse contour <b>${f(picco.ci)}</b> · FloTrac <b>${f(flo.ci)}</b>${truth?` · true <b>${f(derived(eff).CI)}</b>`:''}${PT.meas.pacCI==null?' <span style="color:var(--dim)">(run thermodilution on the Swan–Ganz tab to add the PAC value)</span>':''}`;}
   // calibration bar
   if(!cal){$('calbar').innerHTML='<span class="pill crit">Not calibrated</span> Inject a bolus to calibrate the pulse contour.';}
   else{const age=simT-cal.t, ch=Math.abs(picco.map/cal.map-1)*100, drift=ch>15||cal.line!==s.line;
@@ -1886,7 +1811,7 @@ function renderTiles(){
   $('f_rel').innerHTML=rel.map(([c,t])=>`<li><span class="dot ${c==='ok'?'':c}"></span><span>${t}</span></li>`).join('');
   // arterial header
   const L=win(5), g=mode==='flotrac'?radGrad():0; if(L.length){$('a_sd').textContent=`${fmt(avg(L.map(b=>b.sbp))-g)}/${fmt(avg(L.map(b=>b.dbp))-g)}`;$('a_map').textContent=`(${fmt(avg(L.map(b=>b.map))-g)})`;$('a_hr').textContent=fmt(60/avg(L.map(b=>b.RR)));}
-  $('a_cvp').textContent=fmt(derived(eff).CVP); $('a_scv').textContent=fmt(ox.scv); $('a_lac').textContent=fmt(lac,1);
+  $('a_cvp').textContent=fmt(derived(eff).CVP); $('a_scv').textContent=fmt(ox.scv); $('a_lac').textContent=fmt(PT.lac,1);
   const bd=[[s.rhythm==='af'?'crit':'ok',s.rhythm==='af'?'AF':'Sinus'],[s.vent==='cmv'?'ok':'crit',s.vent==='cmv'?`VC ${s.tv} mL/kg`:'Spont. efforts'],[s.line==='ok'?'ok':'warn',s.line==='ok'?'Line optimal':s.line==='over'?'Overdamped':'Underdamped']];
   if(s.plr)bd.push(['warn','PLR']); if(s.norad>0)bd.push(['', `NE ${s.norad.toFixed(2)}`]); if(s.eeo)bd.push(['warn','EEO hold']); if(s.dobu>0)bd.push(['',`Dobu ${s.dobu}`]);
   $('badges').innerHTML=bd.map(([c,t])=>`<span class="pill ${c}">${t}</span>`).join('');
@@ -1966,7 +1891,7 @@ function drawStarling(){
   x.textAlign='center';for(let g=300;g<=1200;g+=150){x.fillText(g,gx(g),B+12);}
   x.fillText('GEDVI mL/m²',(L+W)/2,B+25); x.save();x.translate(10,(T+B)/2);x.rotate(-Math.PI/2);x.fillText('SVI mL/m²',0,0);x.restore();
   x.fillStyle='rgba(77,196,140,.08)';x.fillRect(gx(680),T,gx(800)-gx(680),B-T);
-  const curve=(c,col,w)=>{x.strokeStyle=col;x.lineWidth=w;x.beginPath();for(let g=300;g<=1200;g+=10){const v=sviFn(g,c);g===300?x.moveTo(gx(g),sy(v)):x.lineTo(gx(g),sy(v));}x.stroke();};
+  const curve=(c,col,w)=>{x.strokeStyle=col;x.lineWidth=w;x.beginPath();for(let g=300;g<=1200;g+=10){const v=c===1?PT.sviNormal(g):sviFn(g);g===300?x.moveTo(gx(g),sy(v)):x.lineTo(gx(g),sy(v));}x.stroke();};
   curve(1,C.line,1.5); curve(eff.c,C.tru,2);
   const dG=s.vent==='cmv'?9*s.tv*(s.chest==='open'?.3:1):60;
   x.strokeStyle=C.flo;x.lineWidth=4;x.beginPath();for(let g=eff.G-dG/2;g<=eff.G+dG/2;g+=4){const v=sviFn(g,eff.c);g===eff.G-dG/2?x.moveTo(gx(g),sy(v)):x.lineTo(gx(g),sy(v));}x.stroke();
@@ -1981,7 +1906,7 @@ function renderInterpFlo(){
   const prof=[['Flow',`CI ${fmt(ci,2)} L/min/m² · ${cat(ci,2.5,4)} (FloTrac range 2.5–4.0)`],['Pressure',`MAP ${fmt(map)} mmHg · SVRI ${fmt(svri)} (${cat(svri,1970,2390)})`],
     ['Dynamic preload',inv?'SVV not interpretable (see validity)':`SVV ${fmt(svv)}% · ${svv>13?'likely fluid responsive':svv<10?(lowTV?'low, but may be a false negative at low VT':'unlikely fluid responsive'):'grey zone (10–13%)'}`],
     ['Not measured','Volumetric preload (GEDVI), contractility (GEF/CFI) and lung water (EVLWI) need thermodilution']];
-  {const ox=oxy(); prof.push(['Oxygen',`ScvO₂ ${fmt(ox.scv)}% · lactate ${fmt(lac,1)} mmol/L → ${ox.scv<70?'delivery inadequate for demand':lac>2&&ox.scv>=75?'high ScvO₂ with raised lactate: extraction defect, a normal ScvO₂ does not exclude hypoperfusion':lac>2?'raised lactate':'adequate'}`]);}
+  {const ox=oxy(); prof.push(['Oxygen',`ScvO₂ ${fmt(ox.scv)}% · lactate ${fmt(PT.lac,1)} mmol/L → ${ox.scv<70?'delivery inadequate for demand':PT.lac>2&&ox.scv>=75?'high ScvO₂ with raised lactate: extraction defect, a normal ScvO₂ does not exclude hypoperfusion':PT.lac>2?'raised lactate':'adequate'}`]);}
   const acts=[];
   if(map<65&&svri<1970&&ci>=2.5) acts.push('<b>Vasopressor.</b> Flow is adequate, SVRI low: vasoplegia.');
   if(ci<2.5){ if(!inv&&svv>13) acts.push('<b>Volume.</b> Low CI with high SVV: preload responsive.');
@@ -2015,7 +1940,7 @@ function renderInterp(){
   if(m){prof.push(['Volumetric preload',`GEDVI ${fmt(m.gedvi)} mL/m² · ${m.gedvi<680?'low':m.gedvi>800?'high':'normal'}`]);
     prof.push(['Contractility',`GEF ${fmt(m.gef)}% · CFI ${fmt(m.cfi,1)} · ${m.gef<25||m.cfi<4.5?'reduced':'preserved'}`]);
     prof.push(['Lung water',`EVLWI ${fmt(m.evlwi,1)} mL/kg${m.evlwi>=10?` · pulmonary oedema, PVPI ${fmt(m.pvpi,1)} → ${m.pvpi>3?'permeability (ARDS/sepsis)':'hydrostatic (cardiac/overload)'}`:' · no oedema'}`]);}
-  {const ox=oxy(); prof.push(['Oxygen',`ScvO₂ ${fmt(ox.scv)}% · lactate ${fmt(lac,1)} mmol/L → ${ox.scv<70?'delivery inadequate for demand':lac>2&&ox.scv>=75?'high ScvO₂ with raised lactate: extraction defect, a normal ScvO₂ does not exclude hypoperfusion':lac>2?'raised lactate':'adequate'}`]);}
+  {const ox=oxy(); prof.push(['Oxygen',`ScvO₂ ${fmt(ox.scv)}% · lactate ${fmt(PT.lac,1)} mmol/L → ${ox.scv<70?'delivery inadequate for demand':PT.lac>2&&ox.scv>=75?'high ScvO₂ with raised lactate: extraction defect, a normal ScvO₂ does not exclude hypoperfusion':PT.lac>2?'raised lactate':'adequate'}`]);}
   prof.push(['Dynamic preload',inv?'SVV/PPV not interpretable (see validity)':`SVV ${fmt(svv)}% · ${svv>12?'likely fluid responsive':svv<10?(lowTV?'low, but may be false negative at low VT':'unlikely fluid responsive'):'grey zone'}`]);
   const acts=[];
   if(m){
@@ -2032,6 +1957,7 @@ function renderInterp(){
   } else acts.push('No thermodilution yet: volumetric preload, contractility and lung water are unknown.');
   if(inv||lowTV) acts.push(`<b>Use PLR</b>${s.vent==='cmv'?' or a 15-s end-expiratory occlusion':''} to test fluid responsiveness${inv?': SVV/PPV are invalid':' at low tidal volume'}. Read pulse contour CI: PLR +10%, EEO +5%.`);
   if(m&&lastEventT>m.t) acts.push('<b>Repeat thermodilution.</b> Volumetrics predate your last intervention.');
+  if(!acts.length) acts.push('<b>No change.</b> Flow, pressure and volumetrics are acceptable; keep monitoring trends.');
   const v=[];
   if(s.vent!=='cmv')v.push(['crit','Spontaneous breathing: SVV and PPV invalid.']);
   if(s.rhythm==='af')v.push(['crit','Irregular rhythm: beat-to-beat variation is not respiratory.']);
@@ -2062,7 +1988,7 @@ function tick(now){
   if(window.APPVIEW==='swan'){last=now;requestAnimationFrame(tick);return;}
   const dt=Math.min(.05,(now-last)/1000); last=now;
   if(running){acc+=dt; while(acc>=DT){step();acc-=DT;}
-    if(simT-secT>=1){secT=simT;lac+=(oxy().lacT-lac)*(1-Math.exp(-1/45));computeFlo();computePicco();checkTests();
+    if(simT-secT>=1){secT=simT;computeFlo();computePicco();checkTests();
       if(s.eeo&&simT>=eeoUntil){s.eeo=false;addEvent('EEO end');syncControls();}
       trend.push({time:simT,p:picco.ci,f:flo.ci,tv:derived(eff).CI});
       while(trend.length&&trend[0].time<simT-310)trend.shift(); drawTrend(); renderInterp(); renderTruth();}
@@ -2083,8 +2009,8 @@ function syncControls(){
   if(!td.anim)$('inject').disabled=!running;
   R.querySelectorAll('#scen button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.k===scenKey)));
 }
-function load(key,isQuiz){
-  scenKey=key; const sc=SCEN[key]; s={...BASE,...sc.p}; eff=targets(); s.map0=derived(eff).MAP; lac=oxy().lacT; eeoUntil=-1; tdNote('');
+function load(key,isQuiz,keep){
+  if(!keep){PT.load(key);PT.quiz=!!isQuiz;} scenKey=PT.key; key=PT.key; const sc=SCEN[key]; labVer=PT.version; eeoUntil=-1; tdNote('');
   simT=0;beat=null;beats=[];fy=derived(eff).MAP;fv=0;lastY=fy;artBuf.fill(NaN);artW=0;flushUntil=-10;flushMark=-10;
   picco={};flo={};cal=null;td.series=[];td.mean=null;td.anim=null;$('inject').disabled=false;trend=[];events=[];pending=[];logRows=[];lastEventT=-1;
   for(let i=0;i<24*FS;i++)step();
@@ -2095,13 +2021,14 @@ function load(key,isQuiz){
   renderTDTable(); syncControls(); renderTiles(); renderLog(); drawTD(); renderInterp(); renderTruth(); drawTrend();
 }
 $('scen').innerHTML=Object.entries(SCEN).map(([k,v])=>`<button type="button" data-k="${k}">${v.name}</button>`).join('');
+const QPOOL=['normal','hypo','septic','lv','rv','tamp','overload'];
 $('scen').addEventListener('click',e=>{const b=e.target.closest('button');if(b)load(b.dataset.k);});
-$('dxSel').innerHTML=Object.entries(SCEN).filter(([k])=>k!=='traps').map(([k,v])=>`<option value="${k}">${v.name}</option>`).join('');
-function newCase(){const ks=Object.keys(SCEN).filter(k=>k!=='traps'&&k!==quiz?.key);load(ks[Math.floor(Math.random()*ks.length)],true);}
+$('dxSel').innerHTML=Object.entries(SCEN).filter(([k])=>QPOOL.includes(k)).map(([k,v])=>`<option value="${k}">${v.name}</option>`).join('');
+function newCase(){const ks=QPOOL.filter(k=>k!==quiz?.key);load(ks[Math.floor(Math.random()*ks.length)],true);}
 function setQuiz(on){
   R_qs(on); $('scen').hidden=on; $('quizBox').hidden=!on; $('showTruth').disabled=on;
   if(on){$('showTruth').checked=false;$('truthPanel').hidden=true;$('lgTrue').hidden=true;newCase();}
-  else{quiz=null;load(scenKey);}
+  else{quiz=null;PT.quiz=false;load(scenKey);}
 }
 function R_qs(on){R.querySelectorAll('#qSeg button').forEach(b=>b.setAttribute('aria-pressed',String((b.dataset.q==='1')===on)));}
 $('qSeg').addEventListener('click',e=>{const b=e.target.closest('button');if(b)setQuiz(b.dataset.q==='1');});
@@ -2118,9 +2045,8 @@ R.querySelectorAll('.seg[data-td]').forEach(g=>g.addEventListener('click',e=>{co
   const k=g.dataset.td; td[k]=k==='vol'?+b.dataset.v:b.dataset.v; syncControls(); if(k==='site'&&b.dataset.v!=='jug')tdNote(b.dataset.v==='fem'?'Femoral venous injection with the site not entered: the extra femoral-iliac-IVC volume is counted as GEDV, so GEDVI and ITBVI read ~15–20% high.':'Femoral site entered: the monitor applies its correction formula; residual bias is small.');}));
 R.querySelectorAll('[data-fluid]').forEach(b=>b.addEventListener('click',()=>{
   const ml=+b.dataset.fluid;
-  if(ml>0){startTest(`Bolus ${ml} mL`); s.vol=clamp(s.vol+.11*ml,300,1400);
-    const pv=s.evlwi*PBW/(.25*eff.G*BSA); s.evlwi+=(pv>3?1.2:eff.G>850?.8:.1)*ml/500; addEvent(`+${ml}`);}
-  else{s.vol=clamp(s.vol-55,300,1400); if(s.evlwi>7)s.evlwi=Math.max(6,s.evlwi-.6); addEvent('−500');}
+  if(ml>0){startTest(`Bolus ${ml} mL`); PT.fluid(ml); addEvent(`+${ml}`);}
+  else{PT.removeFluid(500); addEvent('−500');}
   renderInterp();}));
 $('eeo').addEventListener('click',()=>{if(s.vent!=='cmv'||s.eeo)return; s.eeo=true; eeoUntil=simT+15; startTest('EEO 15 s',15,5); addEvent('EEO'); syncControls();});
 $('plr').addEventListener('click',()=>{s.plr=!s.plr; if(s.plr)startTest('PLR'); addEvent(s.plr?'PLR on':'PLR off'); syncControls();});
@@ -2144,9 +2070,9 @@ function setMode(m){
   const sc=SCEN[scenKey]; $('task').innerHTML=`<b>Try this:</b> ${m==='flotrac'?sc.ft:sc.t}`;
   renderLog(); renderInterp(); renderTruth(); drawTrend(); drawTD();
 }
-load('sepsis');
+load(PT.key,false,true);
 requestAnimationFrame(tick);
-return {shown(m){last=performance.now();setMode(m);renderTiles();drawTD();drawTrend();renderTruth();renderInterp();}};
+return {shown(m){last=performance.now();if(PT.version!==labVer){quiz=null;$('scen').hidden=false;$('quizBox').hidden=true;load(PT.key,false,true);}setMode(m);renderTiles();drawTD();drawTrend();renderTruth();renderInterp();}};
 };
 
 (function(){
@@ -2166,7 +2092,7 @@ return {shown(m){last=performance.now();setMode(m);renderTiles();drawTD();drawTr
     document.querySelectorAll('.switch [data-app]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.app === v)));
     $('appTitle').innerHTML = TITLES[v][0]; $('appSub').textContent = TITLES[v][1];
     if (v !== 'swan'){ if (!pf) pf = window.initPicco($('pfHost')); pf.shown(v); }
-    else requestAnimationFrame(() => { setupMonitor(); updateScales(); drawTD(); });
+    else requestAnimationFrame(() => { setupMonitor(); swanSync(false); updateScales(); drawTD(); });
     if ((v !== 'swan' || location.hash) && location.hash.slice(1) !== v) history.replaceState(null, '', '#' + v);
   }
   document.querySelectorAll('.switch [data-app]').forEach(b => b.addEventListener('click', () => switchApp(b.dataset.app)));
