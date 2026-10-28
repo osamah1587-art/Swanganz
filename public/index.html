@@ -999,27 +999,173 @@ function taperTube(points, r0, r1, mat, segs=120, radial=20){
   return new THREE.Mesh(g, mat);
 }
 
-/* ---------- anatomy (stylised, anatomically ordered) ---------- */
-// outer myocardium: tapered egg, apex to the patient's left
-const shellG = new THREE.SphereGeometry(1, 120, 90);
-{ const p = shellG.attributes.position, v = new THREE.Vector3();
-  for (let i=0;i<p.count;i++){ v.fromBufferAttribute(p,i);
-    if (v.y < 0){ const f = 1 + v.y*.42; v.x *= f; v.z *= f; v.y *= 1.12; }
-    if (v.y > .75) v.y = .75 + (v.y-.75)*.5;
-    const groove = .05*Math.exp(-Math.pow((v.x+.05-v.y*.15)/.09,2))*(v.z>0?1:.4);
-    const n = 1 + .02*Math.sin(v.x*7+v.y*5) - groove; v.multiplyScalar(n);
-    p.setXYZ(i,v.x,v.y,v.z); }
-  shellG.computeVertexNormals(); }
-const shell = new THREE.Mesh(shellG, M.myo); shell.position.set(.08,-.35,-.12); shell.scale.set(2.0,2.1,1.5); shell.rotation.z = .5; heart.add(shell);
+/* ---------- anatomy: signed-distance heart, meshed with surface nets ---------- */
+// Chambers are modelled as cavities; the myocardium is the cavities grown by wall thickness and
+// smoothly blended. Coronaries are projected onto the surface; fat follows the grooves.
+function sdEll(p, c, r, rz=0){
+  let x = p.x-c[0], y = p.y-c[1], z = p.z-c[2];
+  if (rz){ const cs = Math.cos(rz), sn = Math.sin(rz); const nx = x*cs + y*sn; y = -x*sn + y*cs; x = nx; }
+  const ax = x/r[0], ay = y/r[1], az = z/r[2], bx = ax/r[0], by = ay/r[1], bz = az/r[2];
+  const k0 = Math.sqrt(ax*ax + ay*ay + az*az), k1 = Math.sqrt(bx*bx + by*by + bz*bz);
+  return k1 > 0 ? k0*(k0-1)/k1 : -r[2];
+}
+function sdCone(p, a, b, ra, rb){
+  const bx = b[0]-a[0], by = b[1]-a[1], bz = b[2]-a[2], px = p.x-a[0], py = p.y-a[1], pz = p.z-a[2];
+  const h = clamp((px*bx + py*by + pz*bz)/(bx*bx + by*by + bz*bz), 0, 1);
+  const dx = px-bx*h, dy = py-by*h, dz = pz-bz*h; return Math.sqrt(dx*dx + dy*dy + dz*dz) - (ra + (rb-ra)*h);
+}
+function smin(a, b, k){ const h = Math.max(k-Math.abs(a-b), 0)/k; return Math.min(a,b) - h*h*k*.25; }
+const CAV = {
+  ra: p => sdEll(p, [-1.15,.45,.3], [.72,.86,.62], .1),
+  rv: p => smin(sdEll(p, [-.18,-.86,.4], [1.12,.66,.48], .3), sdCone(p, [-.05,-.8,.42], [.5,.64,.42], .36, .3), .3),
+  lv: p => sdCone(p, [.4,.15,-.55], [1.38,-1.85,-.05], .72, .1),
+  la: p => sdEll(p, [.45,.8,-.82], [.74,.44,.48], 0)
+};
+function partsOuter(p){
+  let ven = smin(CAV.rv(p)-.13, CAV.lv(p)-.36, .55);
+  ven = smin(ven, sdCone(p, [.15,-.55,.05], [1.5,-2.15,.05], .95, .12), .45);   // smooth conical envelope
+  let atr = smin(CAV.ra(p)-.08, CAV.la(p)-.08, .35);
+  atr = smin(atr, sdEll(p, [-.52,1.02,.66], [.44,.19,.27], -.55), .16);   // right auricle over the aortic root
+  atr = smin(atr, sdEll(p, [1.02,.66,-.12], [.36,.15,.22], .65), .12);    // left auricle beside the PA
+  return [ven, atr];
+}
+const LADpts = [[.62,.5,.7],[.72,.0,1.0],[.9,-.75,1.0],[1.18,-1.5,.72],[1.48,-2.12,.3]];
+function sdOuter(p){
+  const bound = sdEll(p, [-.05,-.45,0], [2.3,2.3,1.9]); if (bound > .2) return bound;
+  const [ven, atr] = partsOuter(p);
+  let d = smin(ven, atr, .13);
+  d += .006*(Math.sin(p.x*9.1+p.y*4.3) + Math.sin(p.y*8.3-p.z*6.7) + Math.sin(p.z*7.9+p.x*5.2));
+  return d;
+}
+const sdRight = p => smin(CAV.ra(p), CAV.rv(p), .18) + .01*Math.sin(p.x*13+p.y*7)*Math.sin(p.y*11-p.z*9);
+const sdLeft  = p => smin(CAV.la(p), CAV.lv(p), .12) + .01*Math.sin(p.x*12-p.y*9)*Math.sin(p.z*10+p.y*7);
 
+const _g = new THREE.Vector3();
+function gradSDF(f, p, out){ const e = .01; const x = p.x, y = p.y, z = p.z;
+  out.set(f(_g.set(x+e,y,z)) - f(_g.set(x-e,y,z)), f(_g.set(x,y+e,z)) - f(_g.set(x,y-e,z)), f(_g.set(x,y,z+e)) - f(_g.set(x,y,z-e)));
+  return out.normalize(); }
+function projectToSurface(f, p, it=6){ const n = new THREE.Vector3(); for (let i=0;i<it;i++){ gradSDF(f, p, n); p.addScaledVector(n, -f(p)); } return p; }
+
+function surfaceNets(f, min, max, step){
+  const nx = Math.ceil((max[0]-min[0])/step)+1, ny = Math.ceil((max[1]-min[1])/step)+1, nz = Math.ceil((max[2]-min[2])/step)+1;
+  const F = new Float32Array(nx*ny*nz), P = new THREE.Vector3();
+  for (let k=0;k<nz;k++) for (let j=0;j<ny;j++) for (let i=0;i<nx;i++){ P.set(min[0]+i*step, min[1]+j*step, min[2]+k*step); F[i+nx*(j+ny*k)] = f(P); }
+  const id = (i,j,k) => i+nx*(j+ny*k);
+  const cell = new Int32Array(nx*ny*nz).fill(-1), pos = [];
+  const E = [[0,1],[2,3],[4,5],[6,7],[0,2],[1,3],[4,6],[5,7],[0,4],[1,5],[2,6],[3,7]];
+  const C = [[0,0,0],[1,0,0],[0,1,0],[1,1,0],[0,0,1],[1,0,1],[0,1,1],[1,1,1]];
+  const val = new Float32Array(8);
+  for (let k=0;k<nz-1;k++) for (let j=0;j<ny-1;j++) for (let i=0;i<nx-1;i++){
+    let neg = 0; for (let c=0;c<8;c++){ val[c] = F[id(i+C[c][0], j+C[c][1], k+C[c][2])]; if (val[c] < 0) neg++; }
+    if (neg === 0 || neg === 8) continue;
+    let sx=0, sy=0, sz=0, n=0;
+    for (const [a,b] of E){ if ((val[a] < 0) === (val[b] < 0)) continue; const t = val[a]/(val[a]-val[b]);
+      sx += C[a][0] + (C[b][0]-C[a][0])*t; sy += C[a][1] + (C[b][1]-C[a][1])*t; sz += C[a][2] + (C[b][2]-C[a][2])*t; n++; }
+    P.set(min[0]+(i+sx/n)*step, min[1]+(j+sy/n)*step, min[2]+(k+sz/n)*step);
+    projectToSurface(f, P, 2);
+    cell[id(i,j,k)] = pos.length/3; pos.push(P.x, P.y, P.z);
+  }
+  const idx = [];
+  const quad = (a,b,c,d,flip) => { if (a<0||b<0||c<0||d<0) return; if (flip) idx.push(a,c,b, a,d,c); else idx.push(a,b,c, a,c,d); };
+  for (let k=1;k<nz-1;k++) for (let j=1;j<ny-1;j++) for (let i=1;i<nx-1;i++){
+    const v0 = F[id(i,j,k)] < 0;
+    if (v0 !== (F[id(i+1,j,k)] < 0)) quad(cell[id(i,j-1,k-1)], cell[id(i,j,k-1)], cell[id(i,j,k)], cell[id(i,j-1,k)], v0);
+    if (v0 !== (F[id(i,j+1,k)] < 0)) quad(cell[id(i-1,j,k-1)], cell[id(i-1,j,k)], cell[id(i,j,k)], cell[id(i,j,k-1)], v0);
+    if (v0 !== (F[id(i,j,k+1)] < 0)) quad(cell[id(i-1,j-1,k)], cell[id(i,j-1,k)], cell[id(i,j,k)], cell[id(i-1,j,k)], v0);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  // orient each triangle by the field gradient, and use the gradient as the vertex normal
+  const nrm = new Float32Array(pos.length), A = new THREE.Vector3(), B = new THREE.Vector3(), Cc = new THREE.Vector3(), N = new THREE.Vector3();
+  for (let v=0; v<pos.length/3; v++){ P.set(pos[v*3], pos[v*3+1], pos[v*3+2]); gradSDF(f, P, N); nrm[v*3] = N.x; nrm[v*3+1] = N.y; nrm[v*3+2] = N.z; }
+  for (let t=0; t<idx.length; t+=3){
+    A.fromArray(pos, idx[t]*3); B.fromArray(pos, idx[t+1]*3); Cc.fromArray(pos, idx[t+2]*3);
+    B.sub(A); Cc.sub(A); B.cross(Cc);
+    N.set(nrm[idx[t]*3]+nrm[idx[t+1]*3]+nrm[idx[t+2]*3], nrm[idx[t]*3+1]+nrm[idx[t+1]*3+1]+nrm[idx[t+2]*3+1], nrm[idx[t]*3+2]+nrm[idx[t+1]*3+2]+nrm[idx[t+2]*3+2]);
+    if (B.dot(N) < 0){ const s = idx[t+1]; idx[t+1] = idx[t+2]; idx[t+2] = s; }
+  }
+  g.setIndex(idx); g.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+  return g;
+}
+
+// coronary vessels, projected onto the epicardium
+const CORO = {
+  lad: LADpts,
+  diag: [[.82,-.3,1.0],[1.25,-.75,.75],[1.6,-1.2,.25]],
+  rca: [[-.08,.34,.92],[-.55,.08,1.02],[-1.02,-.32,.92],[-1.4,-.78,.45],[-1.38,-1.05,-.15]],
+  am: [[-1.02,-.32,.92],[-.6,-1.05,1.0],[-.1,-1.55,.85]],
+  lcx: [[.78,.42,.12],[1.28,.02,-.25],[1.52,-.4,-.8]],
+  gcv: [[.48,.42,.78],[.62,-.1,1.02],[.84,-.85,1.0],[1.08,-1.5,.75]]
+};
+const coroCurves = {};
+for (const k in CORO){
+  const pts = CORO[k].map(q => projectToSurface(sdOuter, new THREE.Vector3(...q)));
+  const curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal');
+  const sm = curve.getSpacedPoints(60).map(q => { projectToSurface(sdOuter, q); const n = gradSDF(sdOuter, q, new THREE.Vector3()); return q.addScaledVector(n, .025); });
+  coroCurves[k] = sm;
+}
+function distToCoro(p){ let d = 9; for (const k in coroCurves){ for (const q of coroCurves[k]){ const e = p.distanceToSquared(q); if (e < d) d = e; } } return Math.sqrt(d); }
+
+const outerG = surfaceNets(sdOuter, [-2.2,-2.35,-1.65], [2.1,1.65,1.6], .05);
+{ // vertex colours: muscle, epicardial fat in the grooves, and a ventricle/atrium weight for the beat
+  const p = outerG.attributes.position, n = p.count, col = new Float32Array(n*3), wv = new Float32Array(n), P = new THREE.Vector3();
+  for (let i=0;i<n;i++){ P.fromBufferAttribute(p, i);
+    const [ven, atr] = partsOuter(P);
+    wv[i] = clamp(.5 + (atr-ven)*4, 0, 1);
+    const atrMain = smin(CAV.ra(P)-.08, CAV.la(P)-.08, .35); const groove = Math.exp(-Math.pow((ven-atrMain)/.06, 2));
+    const vesselFat = Math.exp(-Math.pow(distToCoro(P)/.11, 2));
+    const fat = clamp(Math.max(groove*.9, vesselFat*.85), 0, 1)*(.75+.25*Math.sin(P.x*31+P.y*23)*Math.sin(P.z*29-P.y*17));
+    const nse = .5 + .25*Math.sin(P.x*17+P.y*6) * Math.sin(P.y*15-P.z*11) + .25*Math.sin(P.z*23 + P.x*9);
+    const r = .30 + .08*nse, g = .035 + .015*nse, b = .03 + .012*nse;
+    col[i*3] = r + (.72-r)*fat; col[i*3+1] = g + (.46-g)*fat; col[i*3+2] = b + (.13-b)*fat;
+  }
+  outerG.setAttribute('color', new THREE.BufferAttribute(col, 3)); outerG.userData.wv = wv;
+}
+const rightG = surfaceNets(sdRight, [-2.0,-1.7,-.5], [.95,1.45,1.15], .045);
+const leftG  = surfaceNets(sdLeft,  [-.45,-1.85,-1.45], [2.0,1.4,.75], .045);
+
+M.myo = new THREE.MeshPhysicalMaterial({vertexColors:true, roughness:.48, clearcoat:.55, clearcoatRoughness:.32, sheen:.4, sheenColor:new THREE.Color(0xff9a8a), sheenRoughness:.5, clippingPlanes:clipList});
+M.sept = new THREE.MeshStandardMaterial({color:0x7c2424, roughness:.85, side:THREE.BackSide, clippingPlanes:clipList});   // cut muscle
+M.cutF = new THREE.MeshStandardMaterial({color:0x7c2424, roughness:.85, side:THREE.FrontSide, clippingPlanes:clipList});
+M.rCav = new THREE.MeshPhysicalMaterial({color:0x4d6fcf, roughness:.55, clearcoat:.35, side:THREE.BackSide, clippingPlanes:clipList});
+M.lCav = new THREE.MeshPhysicalMaterial({color:0xc23a44, roughness:.55, clearcoat:.35, side:THREE.BackSide, clippingPlanes:clipList});
+const coroArt = M.coA = new THREE.MeshPhysicalMaterial({color:0xc8323a, roughness:.35, clearcoat:.8, clippingPlanes:clipList});
+const coroVein = M.coV = new THREE.MeshPhysicalMaterial({color:0x5b3a6e, roughness:.4, clearcoat:.6, clippingPlanes:clipList});
+
+const shell = new THREE.Mesh(outerG, M.myo); heart.add(shell);
+const shellIn = new THREE.Mesh(outerG, M.sept); heart.add(shellIn);
 const chambers = new THREE.Group(); heart.add(chambers);
-const RA = blob([-1.15,.45,.3],[.8,.95,.72], M.rCav, .1);
-const RV = blob([-.2,-.78,.35],[1.08,.82,.62], M.rCav, .38);
-const RVOT = taperTube([[-.05,-.85,.4],[.35,-.35,.45],[.5,.45,.45],[.5,.7,.42]], .42, .34, M.rCav, 40, 24);
-const LV = blob([.78,-.7,-.4],[1.0,1.38,.86], M.lCav, .5);
-const LA = blob([.5,.78,-.78],[.78,.55,.55], M.lCav, 0);
-const SEP = blob([.28,-.62,.0],[.12,1.2,.75], M.sept, .5, .02);
-chambers.add(RA, RV, RVOT, LV, LA, SEP);
+const rightCav = new THREE.Mesh(rightG, M.rCav), leftCav = new THREE.Mesh(leftG, M.lCav);
+const rightWall = new THREE.Mesh(rightG, M.cutF), leftWall = new THREE.Mesh(leftG, M.cutF);
+chambers.add(rightCav, leftCav, rightWall, leftWall);
+const coroGroup = new THREE.Group(); heart.add(coroGroup);
+for (const k in coroCurves){
+  const vein = k === 'gcv', r0 = vein ? .05 : (k==='lad'||k==='rca'||k==='lcx' ? .055 : .04);
+  const pts = coroCurves[k].map(q => [q.x, q.y, q.z]);
+  coroGroup.add(taperTube(pts, r0, r0*.45, vein ? coroVein : coroArt, 80, 10));
+}
+
+// beat: ventricles and atria contract about their own centres
+const VC = new THREE.Vector3(.4,-.75,.05), AC = new THREE.Vector3(-.35,.62,-.2);
+const beatMeshes = [[outerG, outerG.userData.wv], [rightG, null], [leftG, null]];
+for (const [g, w] of beatMeshes){
+  g.userData.base = Float32Array.from(g.attributes.position.array);
+  if (!w){ const p = g.attributes.position, ww = new Float32Array(p.count), P = new THREE.Vector3();
+    for (let i=0;i<p.count;i++){ P.fromBufferAttribute(p,i); const v = Math.min(CAV.rv(P), CAV.lv(P)), a = Math.min(CAV.ra(P), CAV.la(P)); ww[i] = clamp(.5 + (a-v)*4, 0, 1); }
+    g.userData.wv = ww; }
+}
+[shell, shellIn, rightCav, leftCav, rightWall, leftWall].forEach(m => m.frustumCulled = false);
+function beatHeart(v, a){
+  for (const [g] of beatMeshes){
+    const b = g.userData.base, w = g.userData.wv, arr = g.attributes.position.array;
+    for (let i=0, n=w.length; i<n; i++){
+      const wv = w[i], sv = 1 - .05*v*wv, sa = 1 - .055*a*(1-wv), j = i*3;
+      const cx = VC.x*wv + AC.x*(1-wv), cy = VC.y*wv + AC.y*(1-wv), cz = VC.z*wv + AC.z*(1-wv), s = sv*sa;
+      arr[j] = cx + (b[j]-cx)*s; arr[j+1] = cy + (b[j+1]-cy)*s; arr[j+2] = cz + (b[j+2]-cz)*s;
+    }
+    g.attributes.position.needsUpdate = true;
+  }
+}
 
 // great vessels
 const vessels = new THREE.Group(); root.add(vessels);
@@ -1031,9 +1177,6 @@ const lpa = taperTube([[.4,1.6,.25],[.9,2.05,-.2],[1.6,2.25,-.45],[2.2,1.9,-.55]
 const aorta = taperTube([[.3,.25,-.25],[-.12,1.45,.0],[-.05,2.75,-.3],[.65,3.2,-.85],[1.25,2.65,-1.15],[1.32,.6,-1.3],[1.22,-3.0,-1.3]], .4, .32, M.art, 160); vessels.add(aorta);
 [[[-.0,2.95,-.45],[-.25,4.2,-.4]],[[.4,3.15,-.7],[.4,4.3,-.7]],[[.85,3.1,-.95],[1.1,4.2,-1.0]]].forEach(([a,b])=>vessels.add(taperTube([a,[(a[0]+b[0])/2,(a[1]+b[1])/2+.1,(a[2]+b[2])/2],b],.13,.11,M.art,16)));
 [[[.3,.85,-1.0],[-.4,1.15,-1.35]],[[.3,.6,-1.05],[-.4,.45,-1.4]],[[.85,.9,-1.0],[1.6,1.25,-1.3]],[[.85,.6,-1.05],[1.6,.4,-1.35]]].forEach(([a,b])=>vessels.add(taperTube([a,[(a[0]+b[0])/2,(a[1]+b[1])/2,(a[2]+b[2])/2-.05],b],.13,.11,M.pv,16)));
-// coronary hint
-heart.add(taperTube([[.0,.55,.95],[.25,-.2,1.2],[.55,-1.1,1.05],[.85,-1.9,.6]],.045,.03,M.art,40));
-heart.add(taperTube([[-.25,.5,.9],[-.95,.0,.95],[-1.25,-.9,.55]],.045,.03,M.art,40));
 
 // valve rings
 function ring(pos, normal, r){ const m = new THREE.Mesh(new THREE.TorusGeometry(r,.035,10,40), M.valve); m.position.set(...pos); m.lookAt(new THREE.Vector3(...pos).add(new THREE.Vector3(...normal))); return m; }
@@ -1114,10 +1257,10 @@ const V = { cut:true, xray:false, follow:false };
 const allMeshes = []; root.traverse(o => { if (o.isMesh && o !== tipMesh && o !== balloon) allMeshes.push([o, o.material]); });
 function applyView(){
   for (const [o, m] of allMeshes){ o.material = V.xray ? M.fluoro : m; }
-  M.myo.clippingPlanes = M.rCav.clippingPlanes = M.lCav.clippingPlanes = M.sept.clippingPlanes = V.cut ? clipList : [];
+  M.myo.clippingPlanes = M.rCav.clippingPlanes = M.lCav.clippingPlanes = M.sept.clippingPlanes = M.cutF.clippingPlanes = M.coA.clippingPlanes = M.coV.clippingPlanes = V.cut ? clipList : [];
   chambers.visible = V.cut || V.xray;
   M.vein.opacity = V.cut ? .45 : .95; M.vein.depthWrite = !V.cut;
-  [M.myo,M.rCav,M.lCav,M.sept,M.vein].forEach(m => m.needsUpdate = true);
+  [M.myo,M.rCav,M.lCav,M.sept,M.cutF,M.coA,M.coV,M.vein].forEach(m => m.needsUpdate = true);
   $('cutBtn').classList.toggle('on', V.cut); $('xrayBtn').classList.toggle('on', V.xray); $('followBtn').classList.toggle('on', V.follow);
 }
 const TARGET = new THREE.Vector3(-.35,.7,0);
@@ -1144,9 +1287,7 @@ function activation(t){
 
 window.__three = { rebuildCatheter, frame(t, dtReal){
   const act = activation(t);
-  const vs = 1 - .055*act.v, as = 1 - .06*act.a;
-  RV.scale.set(1.08*vs,.82*vs,.62*vs); LV.scale.set(1.0*vs,1.38*(1-.03*act.v),.86*vs); RA.scale.set(.8*as,.95*as,.72*as); LA.scale.set(.78*as,.55*as,.55*as);
-  shell.scale.set(2.0*(1-.02*act.v), 2.1*(1-.012*act.v), 1.5*(1-.02*act.v));
+  beatHeart(act.v, act.a);
   // balloon animation
   const target = S.balloon ? .15 : 0; balloonR += (target - balloonR)*Math.min(1, dtReal*8);
   balloon.scale.setScalar(Math.max(.001, balloonR)); balloon.visible = balloonR > .01;
